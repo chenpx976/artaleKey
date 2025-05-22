@@ -35,6 +35,10 @@ class ConfigManager(QObject):
             'performance': {
                 'enable_logging': True,
                 'log_level': 'INFO'
+            },
+            'window_filter': {
+                'enabled': False,
+                'target_apps': []
             }
         }
         

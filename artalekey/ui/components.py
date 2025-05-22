@@ -1,17 +1,17 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QComboBox, QSpinBox, QCheckBox,
-    QFrame, QScrollArea, QSizePolicy, QSlider
+    QFrame, QScrollArea, QSizePolicy, QSlider, QGroupBox
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPalette, QColor
 
-class HotkeyCard(QFrame):
-    """优化的热键配置卡片 - 改善性能和UI响应"""
+class HotkeyCard(QGroupBox):
+    """简化的热键配置卡片 - 原生外观"""
     config_changed = pyqtSignal(str, dict)  # 配置变更信号
 
     def __init__(self, hotkey_id: str, parent=None):
-        super().__init__(parent)
+        super().__init__("热键设置", parent)
         self.hotkey_id = hotkey_id
         self._debounce_timer = QTimer()  # 防抖计时器
         self._debounce_timer.setSingleShot(True)
@@ -19,97 +19,8 @@ class HotkeyCard(QFrame):
         self.init_ui()
 
     def init_ui(self):
-        self.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Raised)
-        self.setStyleSheet("""
-            QFrame {
-                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                           stop: 0 #3a3a3a, stop: 1 #2d2d2d);
-                border: 1px solid #555555;
-                border-radius: 8px;
-                padding: 15px;
-                margin: 5px;
-            }
-            QLabel {
-                color: #ffffff;
-                font-weight: 500;
-            }
-            QComboBox, QSpinBox {
-                background: #404040;
-                border: 2px solid #666666;
-                border-radius: 6px;
-                padding: 8px;
-                color: #ffffff;
-                font-size: 14px;
-                min-width: 100px;
-            }
-            QComboBox:hover, QSpinBox:hover {
-                border-color: #4CAF50;
-            }
-            QComboBox:focus, QSpinBox:focus {
-                border-color: #4CAF50;
-                outline: none;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-                margin-right: 5px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                background: #505050;
-                border-radius: 3px;
-                width: 16px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: #606060;
-            }
-            QCheckBox {
-                color: #ffffff;
-                font-size: 15px;
-                font-weight: 500;
-                spacing: 10px;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                background: #404040;
-                border: 2px solid #666666;
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:hover {
-                border-color: #4CAF50;
-                background: #454545;
-            }
-            QCheckBox::indicator:checked {
-                background: qlineargradient(x1: 0, y1: 0, x2: 0, y2: 1,
-                                           stop: 0 #66BB6A, stop: 1 #4CAF50);
-                border-color: #4CAF50;
-            }
-            QSlider::groove:horizontal {
-                border: 1px solid #666666;
-                height: 6px;
-                background: #404040;
-                border-radius: 3px;
-            }
-            QSlider::handle:horizontal {
-                background: #4CAF50;
-                border: 1px solid #388E3C;
-                width: 18px;
-                margin: -6px 0;
-                border-radius: 9px;
-            }
-            QSlider::handle:horizontal:hover {
-                background: #66BB6A;
-            }
-        """)
-
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
+        layout.setSpacing(12)
         
         # 主触发键设置
         key_layout = QHBoxLayout()
@@ -125,22 +36,19 @@ class HotkeyCard(QFrame):
         
         # 提示文字
         hint_label = QLabel("（需同时按住↑键）")
-        hint_label.setStyleSheet("color: #999999; font-size: 12px; font-weight: normal;")
+        hint_label.setStyleSheet("color: gray; font-size: 11px;")
         key_layout.addWidget(hint_label)
         
         key_layout.addStretch()
         layout.addLayout(key_layout)
 
-        # 时间设置组
-        time_group = QVBoxLayout()
-        
-        # 长按时间设置 - 使用滑块提高用户体验
+        # 长按时间设置
         hold_layout = QVBoxLayout()
         hold_header = QHBoxLayout()
         hold_label = QLabel("长按触发时间:")
         hold_label.setMinimumWidth(120)
         self.hold_value_label = QLabel("500ms")
-        self.hold_value_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        self.hold_value_label.setStyleSheet("color: blue; font-weight: bold;")
         hold_header.addWidget(hold_label)
         hold_header.addWidget(self.hold_value_label)
         hold_header.addStretch()
@@ -153,7 +61,7 @@ class HotkeyCard(QFrame):
         
         hold_layout.addLayout(hold_header)
         hold_layout.addWidget(self.hold_slider)
-        time_group.addLayout(hold_layout)
+        layout.addLayout(hold_layout)
         
         # 间隔时间设置
         interval_layout = QVBoxLayout()
@@ -161,7 +69,7 @@ class HotkeyCard(QFrame):
         interval_label = QLabel("循环间隔时间:")
         interval_label.setMinimumWidth(120)
         self.interval_value_label = QLabel("40ms")
-        self.interval_value_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        self.interval_value_label.setStyleSheet("color: blue; font-weight: bold;")
         interval_header.addWidget(interval_label)
         interval_header.addWidget(self.interval_value_label)
         interval_header.addStretch()
@@ -174,9 +82,7 @@ class HotkeyCard(QFrame):
         
         interval_layout.addLayout(interval_header)
         interval_layout.addWidget(self.interval_slider)
-        time_group.addLayout(interval_layout)
-        
-        layout.addLayout(time_group)
+        layout.addLayout(interval_layout)
 
         # 启用状态
         self.enabled_check = QCheckBox("启用此功能")
@@ -254,7 +160,7 @@ class HotkeyCard(QFrame):
             self.enabled_check.blockSignals(False)
 
 class ScrollableHotkeyList(QScrollArea):
-    """优化的可滚动热键列表 - 提高滚动性能"""
+    """简化的可滚动热键列表"""
     def __init__(self, parent=None):
         super().__init__(parent)
         self.hotkey_cards = {}  # 缓存卡片引用
@@ -264,39 +170,6 @@ class ScrollableHotkeyList(QScrollArea):
         self.setWidgetResizable(True)
         self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        
-        # 优化滚动条样式
-        self.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background: transparent;
-            }
-            QScrollBar:vertical {
-                border: none;
-                background: rgba(45, 45, 45, 0.8);
-                width: 12px;
-                margin: 0px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical {
-                background: rgba(76, 175, 80, 0.8);
-                min-height: 30px;
-                border-radius: 6px;
-                margin: 2px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: rgba(102, 187, 106, 0.9);
-            }
-            QScrollBar::handle:vertical:pressed {
-                background: rgba(56, 142, 60, 1.0);
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background: none;
-            }
-        """)
 
         self.content = QWidget()
         self.layout = QVBoxLayout(self.content)
