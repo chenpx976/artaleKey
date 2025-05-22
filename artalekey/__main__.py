@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
-from .ui.simple_main_window import SimpleMainWindow
+from artalekey.ui.simple_main_window import SimpleMainWindow
 
 def main():
     app = QApplication(sys.argv)

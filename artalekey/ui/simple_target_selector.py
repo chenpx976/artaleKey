@@ -4,8 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
-from ..core.window_detector import window_monitor
-from ..core.logger import performance_logger
+from artalekey.core.window_detector import window_monitor
+from artalekey.core.logger import performance_logger
 
 class SimpleTargetSelector(QGroupBox):
     """简化的目标应用选择器 - 原生外观，支持默认应用"""

@@ -5,7 +5,7 @@ import threading
 from typing import Optional, Dict, List, Callable
 from collections import deque
 from PyQt6.QtCore import QThread, pyqtSignal
-from .logger import performance_logger
+from artalekey.core.logger import performance_logger
 
 class WindowInfo:
     """窗口信息类"""

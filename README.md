@@ -48,8 +48,8 @@ artalekey/
 ## 📚 文档
 
 详细文档请查看 `docs/` 目录：
-- **[启动说明](docs/启动说明.md)** - 详细的启动方式说明
-- **[UI改进对比](docs/UI_IMPROVEMENT_COMPARISON.md)** - 界面改进说明
+- **[macOS打包指南](docs/macOS打包指南.md)** - 完整的App打包说明
+- **[项目结构整理说明](docs/项目结构整理说明.md)** - 项目结构说明
 - **[性能优化报告](docs/PERFORMANCE_OPTIMIZATION_REPORT.md)** - 性能优化详情
 
 ## 🧪 测试
@@ -76,6 +76,31 @@ python scripts/simple_ui_summary.py
 # 修复验证
 python scripts/apply_ui_fixes.py
 ```
+
+## 📦 打包为macOS App
+
+### 快速打包
+```bash
+# 1. 安装打包依赖
+pip install -r requirements-build.txt
+
+# 2. 运行打包脚本
+python build_macos_app.py
+
+# 3. 查看结果
+# 应用程序: dist/ArtaleKey.app
+```
+
+### 详细说明
+- **[macOS打包指南](docs/macOS打包指南.md)** - 完整的打包教程
+- **[MACOS_BUILD_SUMMARY.md](MACOS_BUILD_SUMMARY.md)** - 打包方案总结
+- **[APP_FIX_SOLUTION.md](APP_FIX_SOLUTION.md)** - App启动问题解决方案
+
+包括：
+- 🎨 自定义应用图标
+- 📦 创建DMG安装包  
+- 🔐 代码签名和公证
+- 🐛 常见问题解决
 
 ## 📋 依赖
 

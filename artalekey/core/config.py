@@ -2,7 +2,7 @@ import json
 import os
 from typing import Dict, Any, Optional
 from PyQt6.QtCore import QSettings, QObject, pyqtSignal
-from .logger import performance_logger
+from artalekey.core.logger import performance_logger
 
 class ConfigManager(QObject):
     """优化的配置管理器 - 支持自动保存和性能监控"""

@@ -5,13 +5,13 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QResizeEvent
 
-from .components import HotkeyCard
-from .simple_target_selector import SimpleTargetSelector
-from .simple_styles import get_adaptive_style, get_native_style
-from ..core.hotkey_manager import KeySimulator, HotkeyListener
-from ..core.config import config_manager
-from ..core.logger import performance_logger
-from ..core.window_detector import window_monitor
+from artalekey.ui.components import HotkeyCard
+from artalekey.ui.simple_target_selector import SimpleTargetSelector
+from artalekey.ui.simple_styles import get_adaptive_style, get_native_style
+from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
+from artalekey.core.config import config_manager
+from artalekey.core.logger import performance_logger
+from artalekey.core.window_detector import window_monitor
 
 class SimpleMainWindow(QMainWindow):
     """简化的主窗口 - 原生外观，字体自适应"""
