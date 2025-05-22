@@ -1,7 +1,91 @@
-# ArtaleKey
+# ArtaleKey - 快捷键管理器
 
-ArtaleKey 是一个现代化的快捷键管理工具，使用 PyQt6 构建
+MacOS 游戏快捷键辅助工具，专为 MapleStory Worlds 等游戏优化。
 
+## 🚀 快速启动
+
+### 推荐启动方式
+```bash
+python -m artalekey
+```
+
+### 备选启动方式
+```bash
+python run_artalekey.py
+```
+
+## ⚙️ 快速设置
+
+1. **启用快速向上功能** ✓
+2. **启用窗口过滤** ✓  
+3. **点击"使用默认应用"** ✓
+4. **在游戏中使用 W+↑ 快捷键** 🎮
+
+## 📁 项目结构
+
+```
+artalekey/
+├── artalekey/              # 核心代码
+│   ├── ui/                 # 用户界面
+│   ├── core/               # 核心功能
+│   └── __main__.py         # 主入口
+├── docs/                   # 文档
+│   ├── 启动说明.md
+│   ├── UI_IMPROVEMENT_COMPARISON.md
+│   └── ...
+├── tests/                  # 测试脚本
+│   ├── simple_native_ui_test.py
+│   ├── test_performance.py
+│   └── ...
+├── scripts/                # 实用脚本
+│   ├── simple_ui_summary.py
+│   └── ...
+├── run_artalekey.py        # 简洁启动脚本
+├── requirements.txt        # 依赖
+└── README.md              # 本文件
+```
+
+## 📚 文档
+
+详细文档请查看 `docs/` 目录：
+- **[启动说明](docs/启动说明.md)** - 详细的启动方式说明
+- **[UI改进对比](docs/UI_IMPROVEMENT_COMPARISON.md)** - 界面改进说明
+- **[性能优化报告](docs/PERFORMANCE_OPTIMIZATION_REPORT.md)** - 性能优化详情
+
+## 🧪 测试
+
+测试脚本位于 `tests/` 目录：
+```bash
+# UI测试
+python tests/simple_native_ui_test.py
+
+# 性能测试  
+python tests/test_performance.py
+
+# 窗口检测测试
+python tests/test_window_detection.py
+```
+
+## 🔧 开发
+
+实用脚本位于 `scripts/` 目录：
+```bash
+# UI改进总结
+python scripts/simple_ui_summary.py
+
+# 修复验证
+python scripts/apply_ui_fixes.py
+```
+
+## 📋 依赖
+
+```bash
+pip install -r requirements.txt
+```
+
+主要依赖：
+- PyQt6 - GUI框架
+- psutil - 系统进程监控
 
 ## 安装
 
@@ -24,12 +108,6 @@ source .venv/bin/activate  # Linux/macOS
 # 或
 .venv\Scripts\activate  # Windows
 uv pip install -r requirements.txt
-```
-
-## 运行
-
-```bash
-python -m artalekey
 ```
 
 ## 贡献
