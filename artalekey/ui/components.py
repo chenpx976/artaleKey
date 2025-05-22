@@ -6,119 +6,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont, QPalette, QColor
 
-class ModernComboBox(QComboBox):
-    """现代风格的下拉框"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QComboBox {
-                border: 2px solid #3d3d3d;
-                border-radius: 4px;
-                padding: 5px;
-                min-width: 100px;
-                background: #2b2b2b;
-                color: #ffffff;
-            }
-            QComboBox:hover {
-                border-color: #4d4d4d;
-            }
-            QComboBox:focus {
-                border-color: #0078d4;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 20px;
-            }
-            QComboBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-                margin-right: 5px;
-            }
-            QComboBox QAbstractItemView {
-                background: #2b2b2b;
-                border: 1px solid #3d3d3d;
-                selection-background-color: #0078d4;
-                selection-color: #ffffff;
-            }
-        """)
-
-class ModernSpinBox(QSpinBox):
-    """现代风格的数字输入框"""
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setStyleSheet("""
-            QSpinBox {
-                border: 2px solid #3d3d3d;
-                border-radius: 4px;
-                padding: 5px;
-                background: #2b2b2b;
-                color: #ffffff;
-            }
-            QSpinBox:hover {
-                border-color: #4d4d4d;
-            }
-            QSpinBox:focus {
-                border-color: #0078d4;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                border: none;
-                background: #3d3d3d;
-                width: 20px;
-            }
-            QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                background: #4d4d4d;
-            }
-            QSpinBox::up-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-bottom: 5px solid #ffffff;
-            }
-            QSpinBox::down-arrow {
-                image: none;
-                border-left: 5px solid transparent;
-                border-right: 5px solid transparent;
-                border-top: 5px solid #ffffff;
-            }
-        """)
-
-class ModernCheckBox(QCheckBox):
-    """现代风格的复选框"""
-    def __init__(self, text="", parent=None):
-        super().__init__(text, parent)
-        self.setStyleSheet("""
-            QCheckBox {
-                spacing: 5px;
-                font-size: 14px;
-                color: #ffffff;
-            }
-            QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                border-radius: 4px;
-            }
-            QCheckBox::indicator:unchecked {
-                border: 2px solid #3d3d3d;
-                background: #2b2b2b;
-            }
-            QCheckBox::indicator:unchecked:hover {
-                border-color: #4d4d4d;
-            }
-            QCheckBox::indicator:checked {
-                border: 2px solid #0078d4;
-                background: #0078d4;
-            }
-            QCheckBox::indicator:checked:hover {
-                background: #006cbd;
-                border-color: #006cbd;
-            }
-        """)
-
 class HotkeyCard(QFrame):
     """热键配置卡片"""
-    deleted = pyqtSignal(str)  # 删除信号
     config_changed = pyqtSignal(str, dict)  # 配置变更信号
 
     def __init__(self, hotkey_id: str, parent=None):
@@ -127,30 +16,25 @@ class HotkeyCard(QFrame):
         self.init_ui()
 
     def init_ui(self):
-        self.setFrameStyle(QFrame.Shape.NoFrame)
+        self.setFrameStyle(QFrame.Shape.Panel | QFrame.Shadow.Raised)
         self.setStyleSheet("""
-            HotkeyCard {
+            QFrame {
                 background: #333333;
-                border-radius: 8px;
-                padding: 15px;
+                border-radius: 4px;
+                padding: 10px;
             }
             QLabel {
                 color: #ffffff;
             }
-            .hint {
-                color: #999999;
-                font-size: 12px;
-                font-style: italic;
-            }
         """)
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
+        layout.setSpacing(10)
         
         # 主触发键设置
         key_layout = QHBoxLayout()
         key_label = QLabel("主触发键:")
-        self.key_combo = ModernComboBox()
+        self.key_combo = QComboBox()
         self.init_key_options()
         
         key_layout.addWidget(key_label)
@@ -158,7 +42,7 @@ class HotkeyCard(QFrame):
         
         # 提示文字
         hint_label = QLabel("（需同时按住↑键）")
-        hint_label.setProperty("class", "hint")
+        hint_label.setStyleSheet("color: #999999; font-size: 12px;")
         key_layout.addWidget(hint_label)
         
         key_layout.addStretch()
@@ -170,7 +54,7 @@ class HotkeyCard(QFrame):
         # 长按时间设置
         hold_layout = QHBoxLayout()
         hold_label = QLabel("长按触发时间(毫秒):")
-        self.hold_spin = ModernSpinBox()
+        self.hold_spin = QSpinBox()
         self.hold_spin.setRange(0, 2000)
         self.hold_spin.setValue(500)
         self.hold_spin.setSingleStep(50)
@@ -182,7 +66,7 @@ class HotkeyCard(QFrame):
         # 间隔时间设置
         interval_layout = QHBoxLayout()
         interval_label = QLabel("左右键循环间隔(毫秒):")
-        self.interval_spin = ModernSpinBox()
+        self.interval_spin = QSpinBox()
         self.interval_spin.setRange(10, 1000)
         self.interval_spin.setValue(40)
         self.interval_spin.setSingleStep(10)
@@ -194,7 +78,7 @@ class HotkeyCard(QFrame):
         layout.addLayout(time_layout)
 
         # 启用状态
-        self.enabled_check = ModernCheckBox("启用此功能")
+        self.enabled_check = QCheckBox("启用此功能")
         self.enabled_check.setChecked(False)  # 默认关闭
         layout.addWidget(self.enabled_check)
 
