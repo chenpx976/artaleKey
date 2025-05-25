@@ -14,7 +14,7 @@ from artalekey.core.window_detector import WindowDetector
 from artalekey.core.database import game_db
 
 class EnhancedOCRManager(QThread):
-    """增强的OCR管理器 - 使用EasyOCR"""
+    """增强的OCR管理器 - 使用EasyOCR，优化性能"""
     
     # 信号定义
     ocr_started = pyqtSignal()
@@ -30,12 +30,23 @@ class EnhancedOCRManager(QThread):
         self._output_folder = None
         self._config = {}
         
-        # OCR引擎
+        # OCR引擎 - 延迟加载
         self._easyocr_reader = None
         self._ocr_engine_loaded = False
+        self._engine_loading = False
+        
+        # 性能优化缓存
+        self._last_screenshot_hash = None
+        self._last_ocr_result = None
+        self._last_window_bounds = None
+        self._bounds_cache_time = 0
+        self._bounds_cache_duration = 5.0  # 窗口边界缓存5秒
+        
+        # 图像预处理缓存
+        self._preprocessed_cache = {}
+        self._cache_max_size = 3
         
         self._setup_output_folder()
-        self._load_ocr_engine()
         
     def _setup_output_folder(self):
         """设置输出文件夹"""
@@ -51,28 +62,95 @@ class EnhancedOCRManager(QThread):
         performance_logger.info(f"OCR输出文件夹设置为: {self._output_folder}")
     
     def _load_ocr_engine(self):
-        """加载EasyOCR引擎"""
+        """延迟加载EasyOCR引擎 - 避免启动时阻塞"""
+        if self._ocr_engine_loaded or self._engine_loading:
+            return
+            
+        self._engine_loading = True
         try:
+            performance_logger.info("开始加载EasyOCR引擎...")
+            start_time = time.time()
+            
             import easyocr
-            self._easyocr_reader = easyocr.Reader(['en', 'ch_sim'], gpu=False)
+            # 优化：只加载必要的语言，禁用GPU以提高兼容性
+            self._easyocr_reader = easyocr.Reader(['en', 'ch_sim'], gpu=False, verbose=False)
+            
+            load_time = time.time() - start_time
             self._ocr_engine_loaded = True
-            performance_logger.info("EasyOCR引擎加载成功")
+            performance_logger.info(f"EasyOCR引擎加载成功，耗时: {load_time:.2f}秒")
             
         except Exception as e:
             performance_logger.error(f"EasyOCR引擎加载失败: {e}")
             self._ocr_engine_loaded = False
+        finally:
+            self._engine_loading = False
+    
+    def _get_image_hash(self, image: Image.Image) -> str:
+        """计算图像哈希值，用于检测重复截图"""
+        # 缩小图像并计算哈希，提高性能
+        small_image = image.resize((64, 64))
+        image_array = np.array(small_image)
+        return str(hash(image_array.tobytes()))
+    
+    def _preprocess_image(self, image: Image.Image) -> np.ndarray:
+        """预处理图像以提高OCR准确性"""
+        image_hash = self._get_image_hash(image)
+        
+        # 检查缓存
+        if image_hash in self._preprocessed_cache:
+            performance_logger.debug("使用预处理图像缓存")
+            return self._preprocessed_cache[image_hash]
+        
+        # 转换为numpy数组
+        img_array = np.array(image)
+        
+        # 图像预处理优化
+        # 1. 转换为灰度图（提高OCR速度）
+        if len(img_array.shape) == 3:
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+        else:
+            gray = img_array
+            
+        # 2. 自适应阈值处理（提高文字识别率）
+        processed = cv2.adaptiveThreshold(
+            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+        )
+        
+        # 3. 轻微的形态学操作（去噪）
+        kernel = np.ones((2, 2), np.uint8)
+        processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
+        
+        # 转换回RGB格式供EasyOCR使用
+        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_GRAY2RGB)
+        
+        # 缓存管理
+        if len(self._preprocessed_cache) >= self._cache_max_size:
+            # 移除最旧的缓存项
+            oldest_key = next(iter(self._preprocessed_cache))
+            del self._preprocessed_cache[oldest_key]
+        
+        self._preprocessed_cache[image_hash] = processed_rgb
+        return processed_rgb
     
     def start_monitoring(self):
-        """开始监控"""
+        """开始监控 - 优化版本"""
         if self._running:
             return
-            
+        
+        # 延迟加载OCR引擎
         if not self._ocr_engine_loaded:
-            self.error_occurred.emit("EasyOCR引擎未加载，请检查依赖包安装")
-            return
+            self._load_ocr_engine()
+            if not self._ocr_engine_loaded:
+                self.error_occurred.emit("EasyOCR引擎加载失败，请检查依赖包安装")
+                return
             
         self._running = True
         self._config = config_manager.get('screenshot_ocr', {})
+        
+        # 清理缓存
+        self._last_screenshot_hash = None
+        self._last_ocr_result = None
+        self._preprocessed_cache.clear()
         
         # 如果配置了立即截图，先执行一次
         if self._config.get('immediate_capture_on_start', True):
@@ -120,7 +198,15 @@ class EnhancedOCRManager(QThread):
         return False
     
     def _get_target_window_bounds(self) -> Optional[Dict]:
-        """获取目标窗口的边界坐标 - 优化版本"""
+        """获取目标窗口的边界坐标 - 优化版本，带缓存"""
+        current_time = time.time()
+        
+        # 检查缓存是否有效
+        if (self._last_window_bounds and 
+            current_time - self._bounds_cache_time < self._bounds_cache_duration):
+            performance_logger.debug("使用窗口边界缓存")
+            return self._last_window_bounds
+        
         target_window = self._config.get('target_window', 'MapleStory Worlds')
         
         try:
@@ -128,7 +214,9 @@ class EnhancedOCRManager(QThread):
             if hasattr(self.window_detector, 'get_game_window_region'):
                 bounds = self.window_detector.get_game_window_region(target_window)
                 if bounds:
-                    performance_logger.info(f"通过Quartz直接获取目标窗口边界: {bounds}")
+                    performance_logger.debug(f"通过Quartz直接获取目标窗口边界: {bounds}")
+                    self._last_window_bounds = bounds
+                    self._bounds_cache_time = current_time
                     return bounds
             
             # 备用方案：使用原有方法
@@ -138,17 +226,23 @@ class EnhancedOCRManager(QThread):
                 if target_window.lower() in window_text:
                     # 如果活动窗口已经包含边界信息，直接使用
                     if active_window.bounds and all(k in active_window.bounds for k in ['x', 'y', 'width', 'height']):
-                        performance_logger.info(f"从活动窗口信息获取边界: {active_window.bounds}")
+                        performance_logger.debug(f"从活动窗口信息获取边界: {active_window.bounds}")
+                        self._last_window_bounds = active_window.bounds
+                        self._bounds_cache_time = current_time
                         return active_window.bounds
                     
                     # 否则尝试获取窗口边界
                     bounds = self.window_detector.get_window_bounds(active_window)
                     if bounds:
-                        performance_logger.info(f"通过窗口检测器获取边界: {bounds}")
+                        performance_logger.debug(f"通过窗口检测器获取边界: {bounds}")
+                        self._last_window_bounds = bounds
+                        self._bounds_cache_time = current_time
                         return bounds
         except Exception as e:
             performance_logger.error(f"获取目标窗口边界失败: {e}")
         
+        # 清理无效缓存
+        self._last_window_bounds = None
         return None
     
     def _capture_window_screenshot(self, bounds: Dict) -> Optional[Image.Image]:
@@ -168,7 +262,7 @@ class EnhancedOCRManager(QThread):
             return None
     
     def _take_screenshot_and_ocr(self):
-        """执行截屏和OCR识别"""
+        """执行截屏和OCR识别 - 优化版本"""
         if not self._running:
             return
             
@@ -178,6 +272,7 @@ class EnhancedOCRManager(QThread):
             return
             
         try:
+            start_time = time.time()
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             screenshot = None
             
@@ -198,6 +293,15 @@ class EnhancedOCRManager(QThread):
                 performance_logger.error("截图失败")
                 return
             
+            # 检查是否为重复截图
+            screenshot_hash = self._get_image_hash(screenshot)
+            if screenshot_hash == self._last_screenshot_hash and self._last_ocr_result:
+                performance_logger.debug("检测到重复截图，使用缓存结果")
+                self.data_extracted.emit(self._last_ocr_result)
+                return
+            
+            self._last_screenshot_hash = screenshot_hash
+            
             # 保存截图（如果配置启用）
             screenshot_path = None
             if self._config.get('save_screenshots', True):
@@ -215,6 +319,9 @@ class EnhancedOCRManager(QThread):
             game_data = self._extract_game_data(ocr_results)
             game_data['timestamp'] = timestamp
             game_data['screenshot_path'] = screenshot_path
+            
+            # 缓存OCR结果
+            self._last_ocr_result = game_data.copy()
             
             # 使用EasyOCR自带的可视化功能
             easyocr_viz_path = self._create_easyocr_visualization(
@@ -235,7 +342,8 @@ class EnhancedOCRManager(QThread):
             # 发送数据信号
             self.data_extracted.emit(game_data)
             
-            performance_logger.info(f"截屏OCR完成: {timestamp}")
+            total_time = time.time() - start_time
+            performance_logger.info(f"截屏OCR完成: {timestamp}, 总耗时: {total_time:.2f}秒")
             performance_logger.info(f"OCR结果已保存: {ocr_result_path}")
             performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}, 金钱={game_data.get('money')}")
             
@@ -260,9 +368,12 @@ class EnhancedOCRManager(QThread):
             easyocr_results = self._easyocr_reader.readtext(rgb_image)
             
             # 调试信息：记录所有识别到的文本
-            performance_logger.info(f"EasyOCR原始识别结果: {len(easyocr_results)} 个文本")
+            performance_logger.debug(f"EasyOCR原始识别结果: {len(easyocr_results)} 个文本")
             for i, (bbox, text, confidence) in enumerate(easyocr_results):
-                performance_logger.info(f"  文本{i+1}: '{text}' (置信度: {confidence:.3f})")
+                performance_logger.debug(f"  文本{i+1}: '{text}' (置信度: {confidence:.3f})")
+            
+            accepted_texts = []
+            filtered_texts = []
             
             for (bbox, text, confidence) in easyocr_results:
                 # 进一步降低置信度要求，特别是对游戏相关文本
@@ -272,7 +383,7 @@ class EnhancedOCRManager(QThread):
                 # 对游戏相关文本使用更低的置信度阈值
                 min_confidence = 0.05 if is_relevant else 0.3
                 
-                performance_logger.info(f"文本 '{text_stripped}' (置信度: {confidence:.3f}) 相关性: {is_relevant}, 阈值: {min_confidence}")
+                performance_logger.debug(f"文本 '{text_stripped}' (置信度: {confidence:.3f}) 相关性: {is_relevant}, 阈值: {min_confidence}")
                 
                 if confidence > min_confidence:
                     if is_relevant:
@@ -283,7 +394,8 @@ class EnhancedOCRManager(QThread):
                             'source': 'easyocr'
                         })
                         results['combined_text'] += text_stripped + ' '
-                        performance_logger.info(f"✅ 接受文本: '{text_stripped}'")
+                        accepted_texts.append(text_stripped)
+                        performance_logger.debug(f"✅ 接受文本: '{text_stripped}'")
                     else:
                         # 高置信度的非相关文本也保留
                         if confidence > 0.5:
@@ -294,18 +406,19 @@ class EnhancedOCRManager(QThread):
                                 'source': 'easyocr',
                                 'filtered': True
                             })
+                            filtered_texts.append(text_stripped)
                 else:
-                    performance_logger.info(f"❌ 拒绝文本: '{text_stripped}' (置信度过低)")
+                    performance_logger.debug(f"❌ 拒绝文本: '{text_stripped}' (置信度过低)")
             
             results['easyocr_results'] = easyocr_results
-            performance_logger.info(f"EasyOCR识别完成，检测到 {len([box for box in results['text_boxes'] if not box.get('filtered', False)])} 个相关文本区域，{len([box for box in results['text_boxes'] if box.get('filtered', False)])} 个被过滤")
+            performance_logger.info(f"EasyOCR识别完成，接受 {len(accepted_texts)} 个相关文本，过滤 {len(filtered_texts)} 个文本")
+            if accepted_texts:
+                performance_logger.info(f"接受的文本: {', '.join(accepted_texts[:5])}{'...' if len(accepted_texts) > 5 else ''}")
             
         except Exception as e:
             performance_logger.error(f"EasyOCR识别失败: {e}")
         
         return results
-    
-
     
     def _is_game_relevant_text(self, text: str) -> bool:
         """判断文本是否与游戏数据相关 - 专注于关键数据"""
@@ -376,8 +489,6 @@ class EnhancedOCRManager(QThread):
         
         return game_data
     
-
-    
     def _extract_from_combined_text(self, combined_text: str, game_data: Dict[str, Any]):
         """从合并文本中提取数据"""
         try:
@@ -396,14 +507,19 @@ class EnhancedOCRManager(QThread):
                         game_data['extraction_details']['level_source'] = 'combined_text'
                         break
             
-            # 提取经验值信息 - 针对多种格式包括 "巨522892[4808%" 
+            # 提取经验值信息 - 针对 "EXP 542552149 [49.88%]" 格式优化
             if not game_data['experience']:
                 exp_patterns = [
-                    r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # 495632[45.57%]
-                    r'EXP\.?\s*(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 495632[45.57%]
-                    r'(\d+(?:,\d{3})*)/(\d+(?:,\d{3})*)\s*\((\d+(?:\.\d+)?)%?\)',  # 495632/1087536(45.57%)
-                    r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',  # 巨522892[4808% (包含前缀字符)
-                    r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',  # 522892[4808 (4位以上数字+百分比)
+                    # 优先匹配明确的EXP格式
+                    r'EXP\.?\s+(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%]
+                    r'EXP\.?\s+(\d+(?:,\d{3})*)\s+[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%] (多空格)
+                    r'EXP\s*(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',     # EXP542552149[49.88%] (紧凑格式)
+                    # 通用格式
+                    r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',           # 542552149[49.88%]
+                    r'(\d+(?:,\d{3})*)/(\d+(?:,\d{3})*)\s*\((\d+(?:\.\d+)?)%?\)', # 495632/1087536(45.57%)
+                    # 容错格式（处理OCR识别错误）
+                    r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',                      # 巨522892[4808% (包含前缀字符)
+                    r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',                        # 522892[4808 (4位以上数字+百分比)
                 ]
                 
                 for pattern in exp_patterns:
@@ -427,8 +543,8 @@ class EnhancedOCRManager(QThread):
                                     # 百分比过大，可能是识别错误，跳过
                                     continue
                             
-                            # 添加经验值合理性检查（一般不会超过1亿）
-                            if exp_value > 0 and exp_value <= 100000000 and 0 <= exp_percentage <= 100:
+                            # 添加经验值合理性检查（调整为10亿上限，适应高等级游戏）
+                            if exp_value > 0 and exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
                                 game_data['experience'] = {
                                     'value': exp_value,
                                     'percentage': exp_percentage
@@ -501,14 +617,14 @@ class EnhancedOCRManager(QThread):
                 
                 # 查找等级相关的文本框
                 if not game_data['level']:
-                    # 更灵活的等级匹配
+                    # 更精确的等级匹配，优先匹配明确的等级格式
                     level_patterns = [
                         r'LV\.?\s*(\d+)',
                         r'Level\.?\s*(\d+)',
                         r'等级\.?\s*(\d+)',
-                        r'^(\d{1,3})$'  # 单独的1-3位数字可能是等级
                     ]
                     
+                    # 首先尝试明确的等级格式
                     for pattern in level_patterns:
                         level_match = re.search(pattern, text, re.IGNORECASE)
                         if level_match:
@@ -518,16 +634,33 @@ class EnhancedOCRManager(QThread):
                                 game_data['extraction_details']['level_source'] = 'text_box'
                                 performance_logger.info(f"从文本框提取等级: {level_value}")
                                 break
+                    
+                    # 如果没有找到明确格式，再尝试单独数字（但要更严格）
+                    if not game_data['level']:
+                        # 只有当文本是纯数字且在合理范围内时才认为是等级
+                        if re.match(r'^\d{1,3}$', text.strip()):
+                            level_value = int(text.strip())
+                            # 更严格的等级范围，避免误识别大数字
+                            if 1 <= level_value <= 200 and level_value not in [542552149, 2723302]:  # 排除明显的经验值和金钱
+                                game_data['level'] = level_value
+                                game_data['extraction_details']['level_source'] = 'text_box'
+                                performance_logger.info(f"从文本框提取等级（纯数字）: {level_value}")
                 
-                # 查找经验相关的文本框 - 更灵活的匹配
+                # 查找经验相关的文本框 - 针对EXP格式优化
                 if not game_data['experience']:
                     exp_patterns = [
-                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # 完整格式
-                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+)[\]\)]',  # 无小数点
-                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?[\]\)]',  # 4位以上数字+百分比
-                        r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',  # 巨522892[4808% (包含前缀字符)
-                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',  # 522892[4808 (4位以上数字+百分比)
-                        r'(\d{4,})',  # 单独的大数字可能是经验值
+                        # 优先匹配明确的EXP格式
+                        r'EXP\.?\s+(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%]
+                        r'EXP\.?\s+(\d+(?:,\d{3})*)\s+[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%] (多空格)
+                        r'EXP\s*(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',     # EXP542552149[49.88%] (紧凑格式)
+                        # 通用格式
+                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',           # 542552149[49.88%]
+                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+)[\]\)]',                      # 无小数点
+                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?[\]\)]',                  # 4位以上数字+百分比
+                        # 容错格式
+                        r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',                      # 巨522892[4808% (包含前缀字符)
+                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',                        # 522892[4808 (4位以上数字+百分比)
+                        r'(\d{4,})',                                                  # 单独的大数字可能是经验值
                     ]
                     
                     for pattern in exp_patterns:
@@ -551,8 +684,8 @@ class EnhancedOCRManager(QThread):
                                             # 百分比过大，可能是识别错误，跳过
                                             continue
                                     
-                                    # 添加经验值合理性检查（一般不会超过1亿）
-                                    if exp_value > 0 and exp_value <= 100000000 and 0 <= exp_percentage <= 100:
+                                    # 添加经验值合理性检查（调整为10亿上限，适应高等级游戏）
+                                    if exp_value > 0 and exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
                                         game_data['experience'] = {
                                             'value': exp_value,
                                             'percentage': exp_percentage
@@ -564,8 +697,8 @@ class EnhancedOCRManager(QThread):
                                         performance_logger.warning(f"文本框经验值数据不合理，跳过: {exp_value} ({exp_percentage}%)")
                                 elif len(exp_match.groups()) == 1:
                                     exp_value = int(exp_match.group(1).replace(',', ''))
-                                    # 添加经验值合理性检查
-                                    if exp_value > 1000 and exp_value <= 100000000:  # 可能的经验值，但不能太大
+                                    # 添加经验值合理性检查（调整为10亿上限）
+                                    if exp_value > 1000 and exp_value <= 1000000000:  # 可能的经验值，但不能太大
                                         game_data['experience'] = {
                                             'value': exp_value,
                                             'percentage': 0.0
@@ -732,12 +865,14 @@ class EnhancedOCRManager(QThread):
             return {key: self._make_json_serializable(value) for key, value in obj.items()}
         elif isinstance(obj, list):
             return [self._make_json_serializable(item) for item in obj]
-        elif isinstance(obj, np.integer):
+        elif isinstance(obj, (np.integer, np.int8, np.int16, np.int32, np.int64)):
             return int(obj)
-        elif isinstance(obj, np.floating):
+        elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
             return float(obj)
         elif isinstance(obj, np.ndarray):
             return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
         else:
             return obj
     

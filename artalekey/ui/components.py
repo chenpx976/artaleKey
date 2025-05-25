@@ -269,7 +269,7 @@ class OCRHotkeyCard(QGroupBox):
         number_keys = [str(i) for i in range(10)]
         self.key_combo.addItems(number_keys)
         
-        self.key_combo.setCurrentText('s')  # 默认选择s键
+        self.key_combo.setCurrentText('c')  # 默认选择c键
 
     def _on_interval_changed(self, value):
         """截图间隔改变处理"""

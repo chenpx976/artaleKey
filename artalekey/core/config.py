@@ -42,7 +42,7 @@ class ConfigManager(QObject):
             },
             'screenshot_ocr': {
                 'enabled': False,
-                'trigger_key': 's',
+                'trigger_key': 'c',
                 'interval': 10,  # 截屏间隔（秒）
                 'target_window': 'MapleStory Worlds',
                 'output_folder': 'ocr_data',

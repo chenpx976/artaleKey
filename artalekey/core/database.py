@@ -3,6 +3,7 @@ import os
 import json
 from datetime import datetime
 from typing import Optional, List, Dict, Any
+import numpy as np
 from artalekey.core.logger import performance_logger
 
 class GameDataDatabase:
@@ -56,6 +57,23 @@ class GameDataDatabase:
             performance_logger.error(f"数据库初始化失败: {e}")
             raise
     
+    def _make_json_serializable(self, obj):
+        """将对象转换为JSON可序列化格式"""
+        if isinstance(obj, dict):
+            return {key: self._make_json_serializable(value) for key, value in obj.items()}
+        elif isinstance(obj, list):
+            return [self._make_json_serializable(item) for item in obj]
+        elif isinstance(obj, (np.integer, np.int8, np.int16, np.int32, np.int64)):
+            return int(obj)
+        elif isinstance(obj, (np.floating, np.float16, np.float32, np.float64)):
+            return float(obj)
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, np.bool_):
+            return bool(obj)
+        else:
+            return obj
+    
     def insert_game_data(self, game_data: Dict[str, Any]) -> bool:
         """插入游戏数据"""
         try:
@@ -66,7 +84,10 @@ class GameDataDatabase:
                 level = game_data.get('level')
                 experience = game_data.get('experience')
                 money = game_data.get('money')
-                raw_data = json.dumps(game_data, ensure_ascii=False)
+                
+                # 使用JSON序列化处理numpy类型
+                serializable_data = self._make_json_serializable(game_data)
+                raw_data = json.dumps(serializable_data, ensure_ascii=False)
                 
                 # 将复杂数据类型转换为字符串
                 if isinstance(experience, dict):

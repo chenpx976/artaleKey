@@ -402,7 +402,12 @@ class SimpleMainWindow(QMainWindow):
             
             if game_data.get('experience'):
                 exp_data = game_data['experience']
-                data_text += f"经验: {exp_data['value']} ({exp_data['percentage']}%) | "
+                if isinstance(exp_data, dict):
+                    exp_value = exp_data.get('value', 0)
+                    exp_percentage = exp_data.get('percentage', 0)
+                    data_text += f"经验: {exp_value:,} ({exp_percentage:.1f}%) | "
+                else:
+                    data_text += f"经验: {exp_data} | "
             
             if game_data.get('money'):
                 data_text += f"金钱: {game_data['money']:,} | "

@@ -150,7 +150,7 @@ class HotkeyListener(QThread):
         self._monitored_keys = {'w', 's', Key.up}  # 添加's'键监听
         
         # OCR快捷键配置
-        self._ocr_trigger_key = 's'  # 默认OCR触发键
+        self._ocr_trigger_key = 'c'  # 默认OCR触发键
         self._target_window_name = 'MapleStory Worlds'  # 目标窗口名称
         
         # 延迟导入窗口检测器以避免循环导入
