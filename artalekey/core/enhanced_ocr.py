@@ -11,6 +11,7 @@ import numpy as np
 from artalekey.core.logger import performance_logger
 from artalekey.core.config import config_manager
 from artalekey.core.window_detector import WindowDetector
+from artalekey.core.database import game_db
 
 class EnhancedOCRManager(QThread):
     """增强的OCR管理器 - 使用EasyOCR"""
@@ -223,6 +224,13 @@ class EnhancedOCRManager(QThread):
             
             # 保存OCR结果
             ocr_result_path = self._save_ocr_result(game_data, timestamp)
+            
+            # 保存到数据库
+            try:
+                game_db.insert_game_data(game_data)
+                performance_logger.info("游戏数据已保存到数据库")
+            except Exception as e:
+                performance_logger.error(f"保存数据到数据库失败: {e}")
             
             # 发送数据信号
             self.data_extracted.emit(game_data)

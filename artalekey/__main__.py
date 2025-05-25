@@ -1,7 +1,7 @@
 import sys
 from PyQt6.QtWidgets import QApplication
 from PyQt6.QtGui import QIcon
-from artalekey.ui.simple_main_window import SimpleMainWindow
+from artalekey.ui.tabbed_main_window import TabbedMainWindow
 
 def main():
     app = QApplication(sys.argv)
@@ -13,8 +13,8 @@ def main():
     else:
         app.setStyle("Fusion")
     
-    # 创建并显示简化主窗口
-    window = SimpleMainWindow()
+    # 创建并显示带标签页的主窗口
+    window = TabbedMainWindow()
     window.show()
     
     sys.exit(app.exec())
