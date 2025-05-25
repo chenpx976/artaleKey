@@ -2,6 +2,7 @@ import os
 import sys
 import time
 import threading
+import subprocess
 from typing import Optional, Dict, List, Callable
 from collections import deque
 from PyQt6.QtCore import QThread, pyqtSignal
@@ -9,18 +10,20 @@ from artalekey.core.logger import performance_logger
 
 class WindowInfo:
     """窗口信息类"""
-    def __init__(self, window_id: int, title: str, process_name: str, process_id: int):
+    def __init__(self, window_id: int, title: str, process_name: str, process_id: int, bounds: Optional[Dict] = None):
         self.window_id = window_id
         self.title = title
         self.process_name = process_name
         self.process_id = process_id
         self.last_active_time = time.time()  # 添加最后活跃时间
+        self.bounds = bounds or {}  # 窗口边界信息 {x, y, width, height}
     
     def __str__(self):
         return f"{self.process_name} - {self.title}"
     
     def __repr__(self):
-        return f"WindowInfo(id={self.window_id}, title='{self.title}', process='{self.process_name}', pid={self.process_id})"
+        bounds_str = f", bounds={self.bounds}" if self.bounds else ""
+        return f"WindowInfo(id={self.window_id}, title='{self.title}', process='{self.process_name}', pid={self.process_id}{bounds_str})"
     
     def __eq__(self, other):
         """比较两个窗口信息是否相同（基于进程名）"""
@@ -33,7 +36,7 @@ class WindowInfo:
         return hash(self.process_name.lower())
 
 class WindowDetector:
-    """跨平台窗口检测器"""
+    """跨平台窗口检测器 - 优化版本"""
     
     def __init__(self):
         self.platform = sys.platform
@@ -49,15 +52,25 @@ class WindowDetector:
             self._setup_linux()
     
     def _setup_macos(self):
-        """设置macOS检测"""
+        """设置macOS检测 - 优化版本"""
         try:
+            # 优先使用 Quartz 框架（更高效）
+            from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+            self._has_quartz = True
+            performance_logger.info("macOS Quartz framework available for window detection")
+        except ImportError:
+            self._has_quartz = False
+            performance_logger.warning("Quartz framework not available")
+        
+        try:
+            # 备用方案：AppKit
             from AppKit import NSWorkspace, NSApplication
             from Cocoa import NSRunningApplication
             self._has_appkit = True
-            performance_logger.info("macOS AppKit available for window detection")
+            performance_logger.info("macOS AppKit available as fallback")
         except ImportError:
             self._has_appkit = False
-            performance_logger.warning("AppKit not available, using fallback method")
+            performance_logger.warning("AppKit not available")
     
     def _setup_windows(self):
         """设置Windows检测"""
@@ -95,34 +108,269 @@ class WindowDetector:
             performance_logger.error(f"Failed to get active window: {e}")
             return None
     
-    def _get_active_window_macos(self) -> Optional[WindowInfo]:
-        """macOS活动窗口检测"""
-        if not self._has_appkit:
-            return self._get_active_window_macos_fallback()
+    def get_window_bounds(self, window_info: WindowInfo) -> Optional[Dict]:
+        """获取窗口边界坐标"""
+        try:
+            if self.platform == "darwin":
+                return self._get_window_bounds_macos(window_info)
+            elif self.platform == "win32":
+                return self._get_window_bounds_windows(window_info)
+            else:
+                return self._get_window_bounds_linux(window_info)
+        except Exception as e:
+            performance_logger.error(f"Failed to get window bounds: {e}")
+            return None
+    
+    def get_game_window_region(self, owner_keyword="MapleStory Worlds") -> Optional[Dict]:
+        """
+        获取游戏窗口区域 - 基于你提供的代码优化
+        
+        参数:
+            owner_keyword: 游戏窗口标题关键字
+            
+        返回:
+            包含 x, y, width, height 的字典或 None
+        """
+        if self.platform != "darwin" or not self._has_quartz:
+            return None
         
         try:
-            from AppKit import NSWorkspace
-            from Cocoa import NSRunningApplication
+            from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
             
-            workspace = NSWorkspace.sharedWorkspace()
-            active_app = workspace.activeApplication()
-            
-            if active_app:
-                process_name = active_app.get('NSApplicationName', 'Unknown')
-                process_id = active_app.get('NSApplicationProcessIdentifier', 0)
-                
-                # 尝试获取窗口标题（简化实现）
-                window_title = process_name  # 在macOS上获取具体窗口标题比较复杂
-                
-                return WindowInfo(
-                    window_id=0,  # macOS窗口ID获取复杂，暂时使用0
-                    title=window_title,
-                    process_name=process_name,
-                    process_id=process_id
-                )
+            windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+            for window in windowList:
+                owner = window.get('kCGWindowOwnerName', '')
+                if owner and owner_keyword in owner:
+                    bounds = window['kCGWindowBounds']
+                    return {
+                        'x': int(bounds['X']),
+                        'y': int(bounds['Y']),
+                        'width': int(bounds['Width']),
+                        'height': int(bounds['Height'])
+                    }
         except Exception as e:
-            performance_logger.error(f"macOS window detection error: {e}")
-            return self._get_active_window_macos_fallback()
+            performance_logger.error(f"Failed to get game window region: {e}")
+        
+        return None
+    
+    def activate_game_window(self, app_name="MapleStory Worlds"):
+        """
+        激活游戏窗口 - 基于你提供的代码
+        
+        参数:
+            app_name: 游戏应用名称
+        """
+        try:
+            script = f'''osascript -e 'tell application "{app_name}" to activate' '''
+            subprocess.run(script, shell=True, check=True)
+            time.sleep(0.2)  # 给窗口切换一点时间
+        except Exception as e:
+            performance_logger.error(f"激活游戏窗口失败: {e}")
+    
+    def is_game_running(self, app_name="MapleStory Worlds") -> bool:
+        """
+        检查游戏是否正在运行 - 基于你提供的代码
+        
+        参数:
+            app_name: 游戏应用名称
+            
+        返回:
+            布尔值
+        """
+        return self.get_game_window_region(app_name) is not None
+    
+    def set_game_window_size(self, width=640, height=350, app_name="MapleStory Worlds"):
+        """
+        设置游戏窗口大小（仅Mac，AppleScript）- 基于你提供的代码
+        """
+        try:
+            script = f'''osascript -e 'tell application "System Events" to tell application process "{app_name}" to set size of front window to {{{width}, {height}}}' '''
+            subprocess.run(script, shell=True, check=True)
+            time.sleep(0.2)
+        except Exception as e:
+            performance_logger.error(f"设置窗口大小失败: {e}")
+    
+    def _get_window_bounds_macos(self, window_info: WindowInfo) -> Optional[Dict]:
+        """获取macOS窗口边界 - 优化版本"""
+        # 首先尝试使用 Quartz 框架（更高效）
+        if self._has_quartz:
+            try:
+                from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+                
+                windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+                for window in windowList:
+                    owner = window.get('kCGWindowOwnerName', '')
+                    if owner and owner.lower() == window_info.process_name.lower():
+                        bounds = window['kCGWindowBounds']
+                        return {
+                            'x': int(bounds['X']),
+                            'y': int(bounds['Y']),
+                            'width': int(bounds['Width']),
+                            'height': int(bounds['Height'])
+                        }
+            except Exception as e:
+                performance_logger.error(f"Quartz window bounds detection error: {e}")
+        
+        # 备用方案：使用 AppleScript
+        try:
+            script = f'''
+            tell application "System Events"
+                tell application process "{window_info.process_name}"
+                    try
+                        set windowBounds to bounds of window 1
+                        return windowBounds
+                    on error
+                        return "error"
+                    end try
+                end tell
+            end tell
+            '''
+            
+            result = subprocess.run(['osascript', '-e', script], 
+                                  capture_output=True, text=True, timeout=2)
+            
+            if result.returncode == 0 and result.stdout.strip() != "error":
+                # 解析边界信息 "x1, y1, x2, y2"
+                bounds_str = result.stdout.strip()
+                try:
+                    coords = [int(x.strip()) for x in bounds_str.split(',')]
+                    if len(coords) == 4:
+                        x1, y1, x2, y2 = coords
+                        return {
+                            'x': x1,
+                            'y': y1,
+                            'width': x2 - x1,
+                            'height': y2 - y1
+                        }
+                except ValueError:
+                    pass
+                    
+        except Exception as e:
+            performance_logger.error(f"AppleScript window bounds detection error: {e}")
+        
+        return None
+    
+    def _get_window_bounds_windows(self, window_info: WindowInfo) -> Optional[Dict]:
+        """获取Windows窗口边界"""
+        if not self._has_win32:
+            return None
+        
+        try:
+            import win32gui
+            
+            hwnd = window_info.window_id
+            if hwnd:
+                rect = win32gui.GetWindowRect(hwnd)
+                return {
+                    'x': rect[0],
+                    'y': rect[1],
+                    'width': rect[2] - rect[0],
+                    'height': rect[3] - rect[1]
+                }
+        except Exception as e:
+            performance_logger.error(f"Windows window bounds detection error: {e}")
+        
+        return None
+    
+    def _get_window_bounds_linux(self, window_info: WindowInfo) -> Optional[Dict]:
+        """获取Linux窗口边界"""
+        if not self._has_xlib:
+            return None
+        
+        try:
+            from Xlib import display, X
+            
+            d = display.Display()
+            window = d.create_resource_object('window', window_info.window_id)
+            
+            # 获取窗口几何信息
+            geometry = window.get_geometry()
+            
+            return {
+                'x': geometry.x,
+                'y': geometry.y,
+                'width': geometry.width,
+                'height': geometry.height
+            }
+        except Exception as e:
+            performance_logger.error(f"Linux window bounds detection error: {e}")
+        
+        return None
+
+    def _get_active_window_macos(self) -> Optional[WindowInfo]:
+        """macOS活动窗口检测 - 优化版本"""
+        # 首先尝试使用 Quartz 框架（更高效）
+        if self._has_quartz:
+            try:
+                from Quartz import CGWindowListCopyWindowInfo, kCGWindowListOptionOnScreenOnly, kCGNullWindowID
+                
+                windowList = CGWindowListCopyWindowInfo(kCGWindowListOptionOnScreenOnly, kCGNullWindowID)
+                
+                # 查找最前面的窗口（通常是活动窗口）
+                for window in windowList:
+                    # 检查窗口层级，0通常表示最前面的窗口
+                    layer = window.get('kCGWindowLayer', 0)
+                    if layer == 0:
+                        owner = window.get('kCGWindowOwnerName', '')
+                        window_name = window.get('kCGWindowName', '')
+                        window_id = window.get('kCGWindowNumber', 0)
+                        owner_pid = window.get('kCGWindowOwnerPID', 0)
+                        
+                        if owner:  # 确保有应用名称
+                            bounds = window.get('kCGWindowBounds', {})
+                            bounds_dict = {
+                                'x': int(bounds.get('X', 0)),
+                                'y': int(bounds.get('Y', 0)),
+                                'width': int(bounds.get('Width', 0)),
+                                'height': int(bounds.get('Height', 0))
+                            } if bounds else {}
+                            
+                            window_info = WindowInfo(
+                                window_id=window_id,
+                                title=window_name or owner,
+                                process_name=owner,
+                                process_id=owner_pid,
+                                bounds=bounds_dict
+                            )
+                            
+                            return window_info
+                            
+            except Exception as e:
+                performance_logger.error(f"Quartz window detection error: {e}")
+        
+        # 备用方案：使用 AppKit
+        if self._has_appkit:
+            try:
+                from AppKit import NSWorkspace
+                from Cocoa import NSRunningApplication
+                
+                workspace = NSWorkspace.sharedWorkspace()
+                active_app = workspace.activeApplication()
+                
+                if active_app:
+                    process_name = active_app.get('NSApplicationName', 'Unknown')
+                    process_id = active_app.get('NSApplicationProcessIdentifier', 0)
+                    
+                    # 尝试获取窗口标题（简化实现）
+                    window_title = process_name  # 在macOS上获取具体窗口标题比较复杂
+                    
+                    window_info = WindowInfo(
+                        window_id=0,  # macOS窗口ID获取复杂，暂时使用0
+                        title=window_title,
+                        process_name=process_name,
+                        process_id=process_id
+                    )
+                    
+                    # 尝试获取窗口边界
+                    bounds = self._get_window_bounds_macos(window_info)
+                    window_info.bounds = bounds or {}
+                    
+                    return window_info
+            except Exception as e:
+                performance_logger.error(f"AppKit window detection error: {e}")
+        
+        # 最后的备用方案：AppleScript
+        return self._get_active_window_macos_fallback()
     
     def _get_active_window_macos_fallback(self) -> Optional[WindowInfo]:
         """macOS备用检测方法"""

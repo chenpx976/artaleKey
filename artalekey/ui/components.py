@@ -1,7 +1,7 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QComboBox, QSpinBox, QCheckBox,
-    QFrame, QScrollArea, QSizePolicy, QSlider, QGroupBox
+    QFrame, QScrollArea, QSizePolicy, QSlider, QGroupBox, QLineEdit
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPalette, QColor
@@ -158,6 +158,180 @@ class HotkeyCard(QGroupBox):
             self.hold_slider.blockSignals(False)
             self.interval_slider.blockSignals(False)
             self.enabled_check.blockSignals(False)
+
+class OCRHotkeyCard(QGroupBox):
+    """OCR快捷键配置卡片 - 参考HotkeyCard设计"""
+    config_changed = pyqtSignal(dict)  # OCR配置变更信号
+
+    def __init__(self, parent=None):
+        super().__init__("OCR快捷键设置", parent)
+        self._debounce_timer = QTimer()  # 防抖计时器
+        self._debounce_timer.setSingleShot(True)
+        self._debounce_timer.timeout.connect(self._emit_config_changed)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        
+        # OCR功能启用开关
+        self.enabled_check = QCheckBox("启用OCR功能")
+        self.enabled_check.setChecked(False)
+        layout.addWidget(self.enabled_check)
+        
+        # OCR触发键设置
+        key_layout = QHBoxLayout()
+        key_label = QLabel("OCR触发键:")
+        key_label.setMinimumWidth(120)
+        
+        self.key_combo = QComboBox()
+        self.key_combo.setMinimumWidth(80)
+        self.init_key_options()
+        
+        key_layout.addWidget(key_label)
+        key_layout.addWidget(self.key_combo)
+        
+        # 提示文字
+        hint_label = QLabel("（仅在目标窗口激活时有效）")
+        hint_label.setStyleSheet("color: gray; font-size: 11px;")
+        key_layout.addWidget(hint_label)
+        
+        key_layout.addStretch()
+        layout.addLayout(key_layout)
+
+        # 截图间隔设置
+        interval_layout = QVBoxLayout()
+        interval_header = QHBoxLayout()
+        interval_label = QLabel("截图间隔:")
+        interval_label.setMinimumWidth(120)
+        self.interval_value_label = QLabel("10秒")
+        self.interval_value_label.setStyleSheet("color: blue; font-weight: bold;")
+        interval_header.addWidget(interval_label)
+        interval_header.addWidget(self.interval_value_label)
+        interval_header.addStretch()
+        
+        self.interval_slider = QSlider(Qt.Orientation.Horizontal)
+        self.interval_slider.setRange(5, 60)  # 5秒到60秒
+        self.interval_slider.setValue(10)
+        self.interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
+        self.interval_slider.setTickInterval(10)
+        
+        interval_layout.addLayout(interval_header)
+        interval_layout.addWidget(self.interval_slider)
+        layout.addLayout(interval_layout)
+        
+        # 目标窗口设置
+        window_layout = QHBoxLayout()
+        window_label = QLabel("目标窗口:")
+        window_label.setMinimumWidth(120)
+        
+        self.window_input = QLineEdit()
+        self.window_input.setPlaceholderText("MapleStory Worlds")
+        self.window_input.setText("MapleStory Worlds")
+        
+        window_layout.addWidget(window_label)
+        window_layout.addWidget(self.window_input)
+        layout.addLayout(window_layout)
+        
+        # 简化的高级选项 - 使用基础布局
+        self.save_screenshots_check = QCheckBox("保存截图文件")
+        self.save_screenshots_check.setChecked(True)
+        layout.addWidget(self.save_screenshots_check)
+        
+        self.immediate_capture_check = QCheckBox("启动时立即截图")
+        self.immediate_capture_check.setChecked(True)
+        layout.addWidget(self.immediate_capture_check)
+        
+        self.window_only_check = QCheckBox("仅截取目标窗口")
+        self.window_only_check.setChecked(True)
+        layout.addWidget(self.window_only_check)
+
+        # 连接信号 - 使用防抖机制
+        self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
+        self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
+        self.interval_slider.valueChanged.connect(self._on_interval_changed)
+        self.window_input.textChanged.connect(self._on_config_changed_debounced)
+        self.save_screenshots_check.stateChanged.connect(self._on_config_changed_debounced)
+        self.immediate_capture_check.stateChanged.connect(self._on_config_changed_debounced)
+        self.window_only_check.stateChanged.connect(self._on_config_changed_debounced)
+
+    def init_key_options(self):
+        """初始化OCR快捷键选项"""
+        # OCR常用快捷键
+        ocr_keys = ['s', 'o', 'c', 'r', 'p', 'i', 'u', 'y']
+        self.key_combo.addItems(ocr_keys)
+        
+        # 其他字母键
+        other_letters = [chr(i) for i in range(ord('a'), ord('z') + 1) if chr(i) not in ocr_keys]
+        self.key_combo.addItems(other_letters)
+        
+        # 数字键
+        number_keys = [str(i) for i in range(10)]
+        self.key_combo.addItems(number_keys)
+        
+        self.key_combo.setCurrentText('s')  # 默认选择s键
+
+    def _on_interval_changed(self, value):
+        """截图间隔改变处理"""
+        self.interval_value_label.setText(f"{value}秒")
+        self._on_config_changed_debounced()
+
+    def _on_config_changed_debounced(self):
+        """防抖的配置变更处理"""
+        self._debounce_timer.stop()
+        self._debounce_timer.start(150)  # 150ms防抖
+
+    def _emit_config_changed(self):
+        """发送配置变更信号"""
+        self.config_changed.emit(self.get_config())
+
+    def get_config(self) -> dict:
+        """获取当前OCR配置"""
+        return {
+            'enabled': self.enabled_check.isChecked(),
+            'trigger_key': self.key_combo.currentText(),
+            'interval': self.interval_slider.value(),
+            'target_window': self.window_input.text() or 'MapleStory Worlds',
+            'save_screenshots': self.save_screenshots_check.isChecked(),
+            'immediate_capture_on_start': self.immediate_capture_check.isChecked(),
+            'capture_window_only': self.window_only_check.isChecked(),
+            'output_folder': 'ocr_data'
+        }
+
+    def set_config(self, config: dict):
+        """设置OCR配置 - 避免触发信号"""
+        self.enabled_check.blockSignals(True)
+        self.key_combo.blockSignals(True)
+        self.interval_slider.blockSignals(True)
+        self.window_input.blockSignals(True)
+        self.save_screenshots_check.blockSignals(True)
+        self.immediate_capture_check.blockSignals(True)
+        self.window_only_check.blockSignals(True)
+        
+        try:
+            if 'enabled' in config:
+                self.enabled_check.setChecked(config['enabled'])
+            if 'trigger_key' in config:
+                self.key_combo.setCurrentText(config['trigger_key'])
+            if 'interval' in config:
+                self.interval_slider.setValue(config['interval'])
+                self.interval_value_label.setText(f"{config['interval']}秒")
+            if 'target_window' in config:
+                self.window_input.setText(config['target_window'])
+            if 'save_screenshots' in config:
+                self.save_screenshots_check.setChecked(config['save_screenshots'])
+            if 'immediate_capture_on_start' in config:
+                self.immediate_capture_check.setChecked(config['immediate_capture_on_start'])
+            if 'capture_window_only' in config:
+                self.window_only_check.setChecked(config['capture_window_only'])
+        finally:
+            self.enabled_check.blockSignals(False)
+            self.key_combo.blockSignals(False)
+            self.interval_slider.blockSignals(False)
+            self.window_input.blockSignals(False)
+            self.save_screenshots_check.blockSignals(False)
+            self.immediate_capture_check.blockSignals(False)
+            self.window_only_check.blockSignals(False)
 
 class ScrollableHotkeyList(QScrollArea):
     """简化的可滚动热键列表"""

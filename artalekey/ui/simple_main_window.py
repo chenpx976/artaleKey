@@ -1,17 +1,18 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QPushButton, QLabel, QMessageBox, QCheckBox, QGroupBox
+    QPushButton, QLabel, QMessageBox, QCheckBox, QGroupBox, QLineEdit, QScrollArea
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QResizeEvent
 
-from artalekey.ui.components import HotkeyCard
+from artalekey.ui.components import HotkeyCard, OCRHotkeyCard
 from artalekey.ui.simple_target_selector import SimpleTargetSelector
 from artalekey.ui.simple_styles import get_adaptive_style, get_native_style
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
 from artalekey.core.config import config_manager
 from artalekey.core.logger import performance_logger
 from artalekey.core.window_detector import window_monitor
+from artalekey.core.enhanced_ocr import EnhancedOCRManager
 
 class SimpleMainWindow(QMainWindow):
     """简化的主窗口 - 原生外观，字体自适应"""
@@ -24,10 +25,12 @@ class SimpleMainWindow(QMainWindow):
         # 初始化管理器
         self.key_simulator = KeySimulator()
         self.hotkey_listener = HotkeyListener(self)
+        self.screenshot_ocr_manager = EnhancedOCRManager(self)
         
         # 状态追踪
         self._is_simulation_running = False
         self._window_filter_enabled = False
+        self._is_ocr_running = False
         
         # 字体自适应
         self.update_adaptive_style()
@@ -55,11 +58,21 @@ class SimpleMainWindow(QMainWindow):
         self.update_adaptive_style()
         
     def init_ui(self):
-        central_widget = QWidget()
-        self.setCentralWidget(central_widget)
-        layout = QVBoxLayout(central_widget)
+        # 创建滚动区域
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # 创建内容widget
+        content_widget = QWidget()
+        layout = QVBoxLayout(content_widget)
         layout.setSpacing(15)
         layout.setContentsMargins(15, 15, 15, 15)
+        
+        # 设置滚动区域
+        scroll_area.setWidget(content_widget)
+        self.setCentralWidget(scroll_area)
         
         # 热键配置组
         hotkey_group = QGroupBox("热键配置")
@@ -81,6 +94,20 @@ class SimpleMainWindow(QMainWindow):
         self.global_switch = QCheckBox("启用快速向上功能")
         control_layout.addWidget(self.global_switch)
         
+        # OCR配置组件
+        self.ocr_card = OCRHotkeyCard()
+        control_layout.addWidget(self.ocr_card)
+        
+        # OCR状态显示
+        self.ocr_status_label = QLabel("OCR功能未启用")
+        self.ocr_status_label.setStyleSheet("color: gray; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
+        control_layout.addWidget(self.ocr_status_label)
+        
+        # 最新游戏数据显示
+        self.game_data_label = QLabel("暂无游戏数据")
+        self.game_data_label.setStyleSheet("color: black; padding: 8px; border: 1px solid lightgray; border-radius: 4px; background-color: #f5f5f5;")
+        control_layout.addWidget(self.game_data_label)
+        
         # 状态指示器
         self.status_label = QLabel("就绪")
         self.status_label.setStyleSheet("color: blue; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
@@ -100,10 +127,22 @@ class SimpleMainWindow(QMainWindow):
         ui_config = config_manager.get_ui_config()
         self._ui_config = ui_config
         
+        # 加载OCR配置
+        ocr_config = config_manager.get('screenshot_ocr', {})
+        self._ocr_trigger_key = ocr_config.get('trigger_key', 's')
+        
         # 恢复窗口几何尺寸
         if ui_config.get('window_geometry'):
             try:
-                self.restoreGeometry(ui_config['window_geometry'])
+                from PyQt6.QtCore import QByteArray
+                geometry_data = ui_config['window_geometry']
+                if isinstance(geometry_data, str):
+                    # 从base64字符串恢复QByteArray
+                    geometry = QByteArray.fromBase64(geometry_data.encode('utf-8'))
+                    self.restoreGeometry(geometry)
+                else:
+                    # 兼容旧格式
+                    self.restoreGeometry(geometry_data)
             except Exception:
                 pass  # 忽略几何恢复错误
     
@@ -115,8 +154,15 @@ class SimpleMainWindow(QMainWindow):
         # 保存UI配置
         ui_config = self._ui_config.copy()
         ui_config['global_enabled'] = self.global_switch.isChecked()
-        ui_config['window_geometry'] = self.saveGeometry()
+        # 将QByteArray转换为base64字符串
+        geometry = self.saveGeometry()
+        if geometry:
+            ui_config['window_geometry'] = geometry.toBase64().data().decode('utf-8')
         config_manager.set_ui_config(ui_config)
+        
+        # 保存OCR配置
+        ocr_config = self.ocr_card.get_config()
+        config_manager.set('screenshot_ocr', ocr_config)
         
         # 保存窗口过滤配置
         window_filter_config = {
@@ -130,12 +176,18 @@ class SimpleMainWindow(QMainWindow):
         # 全局开关信号
         self.global_switch.stateChanged.connect(self.on_global_switch_changed)
         
+        # OCR配置卡片信号
+        self.ocr_card.config_changed.connect(self.on_ocr_config_changed)
+        
+
+        
         # 配置变更信号
         self.hotkey_card.config_changed.connect(self.on_config_changed)
         
         # 热键监听器信号
         self.hotkey_listener.key_combination_detected.connect(self.on_hotkey_detected)
         self.hotkey_listener.key_combination_released.connect(self.on_hotkey_released)
+        self.hotkey_listener.screenshot_ocr_toggle.connect(self.on_screenshot_ocr_toggle)
         
         # 模拟器信号
         self.key_simulator.simulation_started.connect(self.on_simulation_started)
@@ -147,6 +199,12 @@ class SimpleMainWindow(QMainWindow):
         # 窗口监控信号
         window_monitor.target_window_activated.connect(self.on_target_window_activated)
         window_monitor.target_window_deactivated.connect(self.on_target_window_deactivated)
+        
+        # 截屏OCR管理器信号
+        self.screenshot_ocr_manager.ocr_started.connect(self.on_ocr_started)
+        self.screenshot_ocr_manager.ocr_stopped.connect(self.on_ocr_stopped)
+        self.screenshot_ocr_manager.data_extracted.connect(self.on_game_data_extracted)
+        self.screenshot_ocr_manager.error_occurred.connect(self.on_ocr_error)
         
         # 应用保存的配置
         self.apply_saved_config()
@@ -160,6 +218,12 @@ class SimpleMainWindow(QMainWindow):
         # 应用UI配置
         self.global_switch.setChecked(self._ui_config.get('global_enabled', False))
         
+        # 应用OCR配置
+        ocr_config = config_manager.get('screenshot_ocr', {})
+        self.ocr_card.set_config(ocr_config)
+        
+
+        
         # 应用窗口过滤配置
         window_filter_config = config_manager.get('window_filter', {})
         self.target_selector.set_filter_enabled(window_filter_config.get('enabled', False))
@@ -170,6 +234,11 @@ class SimpleMainWindow(QMainWindow):
         # 更新热键监听器和模拟器设置
         self.hotkey_listener.set_hold_time(hotkey_config['hold_time'])
         self.key_simulator.set_interval(hotkey_config['interval'])
+        
+        # 设置OCR快捷键和目标窗口
+        ocr_config = self.ocr_card.get_config()
+        self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 's'))
+        self.hotkey_listener.set_target_window_name(ocr_config.get('target_window', 'MapleStory Worlds'))
         
     def on_config_changed(self, hotkey_id: str, config: dict):
         """配置变更处理"""
@@ -273,7 +342,88 @@ class SimpleMainWindow(QMainWindow):
             target_app = self.target_selector.get_target_app()
             self.status_label.setText(f"⏸️ {target_app} 未激活 - 快捷键已暂停")
             self.status_label.setStyleSheet("color: orange; font-weight: bold; padding: 8px; border: 1px solid orange; border-radius: 4px;")
+    
+    def on_ocr_config_changed(self, config):
+        """OCR配置改变"""
+        # 保存配置
+        config_manager.set('screenshot_ocr', config)
+        
+        # 更新热键监听器
+        self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 's'))
+        self.hotkey_listener.set_target_window_name(config.get('target_window', 'MapleStory Worlds'))
+        
+        # 更新状态显示
+        if config.get('enabled', False):
+            trigger_key = config.get('trigger_key', 's')
+            self.ocr_status_label.setText(f"✅ OCR功能已启用 - 按 '{trigger_key}' 键开始/停止（仅在目标窗口激活时）")
+            self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid lightgreen; border-radius: 4px;")
+        else:
+            if self._is_ocr_running:
+                self.screenshot_ocr_manager.stop_monitoring()
+            self.ocr_status_label.setText("❌ OCR功能已禁用")
+            self.ocr_status_label.setStyleSheet("color: red; font-weight: bold; padding: 8px; border: 1px solid lightcoral; border-radius: 4px;")
+    
+    def on_screenshot_ocr_toggle(self):
+        """截屏OCR切换"""
+        ocr_config = self.ocr_card.get_config()
+        if not ocr_config.get('enabled', False):
+            return
             
+        if self._is_ocr_running:
+            self.screenshot_ocr_manager.stop_monitoring()
+        else:
+            self.screenshot_ocr_manager.start_monitoring()
+    
+    def on_ocr_started(self):
+        """OCR监控开始"""
+        self._is_ocr_running = True
+        self.ocr_status_label.setText("🔄 OCR监控运行中... (EasyOCR)")
+        self.ocr_status_label.setStyleSheet("color: orange; font-weight: bold; padding: 8px; border: 1px solid orange; border-radius: 4px;")
+        performance_logger.info("OCR监控已启动")
+    
+    def on_ocr_stopped(self):
+        """OCR监控停止"""
+        self._is_ocr_running = False
+        ocr_config = self.ocr_card.get_config()
+        if ocr_config.get('enabled', False):
+            trigger_key = ocr_config.get('trigger_key', 's')
+            self.ocr_status_label.setText(f"✅ OCR功能已启用 - 按 '{trigger_key}' 键开始/停止（仅在目标窗口激活时）")
+            self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid lightgreen; border-radius: 4px;")
+        performance_logger.info("OCR监控已停止")
+    
+    def on_game_data_extracted(self, game_data):
+        """游戏数据提取完成"""
+        try:
+            # 格式化显示游戏数据
+            data_text = "游戏数据: "
+            
+            if game_data.get('level'):
+                data_text += f"等级: {game_data['level']} | "
+            
+            if game_data.get('experience'):
+                exp_data = game_data['experience']
+                data_text += f"经验: {exp_data['value']} ({exp_data['percentage']}%) | "
+            
+            if game_data.get('money'):
+                data_text += f"金钱: {game_data['money']:,} | "
+            
+            data_text += f"时间: {game_data.get('timestamp', 'N/A')}"
+            
+            self.game_data_label.setText(data_text)
+            self.game_data_label.setStyleSheet("color: darkgreen; padding: 8px; border: 1px solid lightgreen; border-radius: 4px; background-color: #f0fff0;")
+            
+            performance_logger.info(f"游戏数据已更新: Level={game_data.get('level')}, Exp={game_data.get('experience')}, Money={game_data.get('money')}")
+            
+        except Exception as e:
+            performance_logger.error(f"显示游戏数据失败: {e}")
+    
+    def on_ocr_error(self, error_message):
+        """OCR错误处理"""
+        self.game_data_label.setText(f"OCR错误: {error_message}")
+        self.game_data_label.setStyleSheet("color: red; padding: 8px; border: 1px solid lightcoral; border-radius: 4px; background-color: #fff0f0;")
+        performance_logger.error(f"OCR错误: {error_message}")
+    
+
     def closeEvent(self, event):
         """关闭窗口事件"""
         reply = QMessageBox.question(
@@ -290,6 +440,10 @@ class SimpleMainWindow(QMainWindow):
             if self._is_simulation_running:
                 self.key_simulator.stop()
                 self.key_simulator.wait(1000)
+            
+            if self._is_ocr_running:
+                self.screenshot_ocr_manager.stop_monitoring()
+                self.screenshot_ocr_manager.wait(1000)
                 
             self.hotkey_listener.stop()
             

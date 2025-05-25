@@ -90,6 +90,10 @@ class PerformanceLogger:
     def error(self, message: str):
         """错误日志"""
         self.logger.error(message)
+    
+    def debug(self, message: str):
+        """调试日志"""
+        self.logger.debug(message)
 
 # 全局日志实例
 performance_logger = PerformanceLogger() 

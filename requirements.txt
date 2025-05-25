@@ -3,4 +3,7 @@ pynput>=1.7.6
 psutil>=5.9.0
 pyobjc-framework-Cocoa>=10.0; sys_platform == "darwin"
 pywin32>=306; sys_platform == "win32"
-python-xlib>=0.33; sys_platform == "linux" 
+python-xlib>=0.33; sys_platform == "linux"
+Pillow>=10.0.0
+opencv-python>=4.8.0
+easyocr>=1.7.0 

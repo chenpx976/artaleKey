@@ -39,6 +39,17 @@ class ConfigManager(QObject):
             'window_filter': {
                 'enabled': False,
                 'target_apps': []
+            },
+            'screenshot_ocr': {
+                'enabled': False,
+                'trigger_key': 's',
+                'interval': 10,  # 截屏间隔（秒）
+                'target_window': 'MapleStory Worlds',
+                'output_folder': 'ocr_data',
+
+                'save_screenshots': True,
+                'immediate_capture_on_start': True,  # 开启时立即截图
+                'capture_window_only': True  # 只截取目标窗口内容
             }
         }
         
@@ -114,7 +125,9 @@ class ConfigManager(QObject):
         
         # 发送变更信号
         if old_value != value:
-            self.config_changed.emit(key, value)
+            # 确保发送的值是字典格式，如果不是则包装成字典
+            signal_value = value if isinstance(value, dict) else {'value': value}
+            self.config_changed.emit(key, signal_value)
         
         # 自动保存
         if auto_save:
