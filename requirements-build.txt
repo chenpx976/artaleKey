@@ -1,4 +1,4 @@
-# 打包依赖 - macOS App构建所需
+# 构建专用依赖
 pyinstaller>=6.0.0
 setuptools>=69.0.0
 wheel>=0.42.0
