@@ -56,3 +56,4 @@ ocr_data
 .DS_Store
 .cursor
 ArtaleKey.spec
+tests/preprocessing_test_results

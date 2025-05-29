@@ -177,6 +177,52 @@ class TabbedMainWindow(QMainWindow):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
         
+        # LLM API 配置组
+        llm_group = QGroupBox("LLM API 配置")
+        llm_layout = QVBoxLayout(llm_group)
+        
+        # API 密钥输入
+        api_key_layout = QHBoxLayout()
+        api_key_layout.addWidget(QLabel("OpenRouter API 密钥:"))
+        
+        self.api_key_input = QLineEdit()
+        self.api_key_input.setPlaceholderText("请输入您的 OpenRouter API 密钥")
+        self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)  # 密码模式隐藏输入
+        api_key_layout.addWidget(self.api_key_input)
+        
+        # 显示/隐藏密钥按钮
+        self.show_api_key_btn = QPushButton("显示")
+        self.show_api_key_btn.setMaximumWidth(60)
+        self.show_api_key_btn.clicked.connect(self._toggle_api_key_visibility)
+        api_key_layout.addWidget(self.show_api_key_btn)
+        
+        llm_layout.addLayout(api_key_layout)
+        
+        # 保存按钮和状态
+        api_key_control_layout = QHBoxLayout()
+        
+        self.save_api_key_btn = QPushButton("保存 API 密钥")
+        self.save_api_key_btn.clicked.connect(self._save_api_key)
+        api_key_control_layout.addWidget(self.save_api_key_btn)
+        
+        self.api_key_status_label = QLabel("未配置")
+        self.api_key_status_label.setStyleSheet("color: gray; font-weight: bold;")
+        api_key_control_layout.addWidget(self.api_key_status_label)
+        
+        api_key_control_layout.addStretch()
+        llm_layout.addLayout(api_key_control_layout)
+        
+        # API 信息说明
+        info_label = QLabel("• 获取 API 密钥：访问 <a href='https://openrouter.ai/'>OpenRouter</a> 注册并获取密钥<br>"
+                           "• 使用模型：qwen/qwen2.5-vl-72b-instruct:free (免费)<br>"
+                           "• 密钥将安全存储在本地配置文件中")
+        info_label.setOpenExternalLinks(True)
+        info_label.setStyleSheet("color: #666; font-size: 11px; padding: 5px;")
+        info_label.setWordWrap(True)
+        llm_layout.addWidget(info_label)
+        
+        layout.addWidget(llm_group)
+        
         # 目标应用设置组
         app_group = QGroupBox("目标应用设置")
         app_layout = QVBoxLayout(app_group)
@@ -429,6 +475,9 @@ class TabbedMainWindow(QMainWindow):
         if not config_manager.get('screenshot_ocr', {}) or not config_manager.get('window_filter', {}):
             self.save_config()  # 保存默认配置，确保下次启动能记住状态
         
+        # 加载 API 密钥状态
+        self._update_api_key_status()
+        
     def _update_ocr_status(self, ocr_config, target_window):
         """更新OCR状态显示"""
         # 修改：如果配置为空或没有enabled字段，默认认为是启用状态
@@ -625,4 +674,66 @@ class TabbedMainWindow(QMainWindow):
         if hasattr(self, 'window_status_widget'):
             self.window_status_widget.close()
         
-        event.accept() 
+        event.accept()
+
+    def _toggle_api_key_visibility(self):
+        """切换 API 密钥显示/隐藏"""
+        if self.api_key_input.echoMode() == QLineEdit.EchoMode.Password:
+            self.api_key_input.setEchoMode(QLineEdit.EchoMode.Normal)
+            self.show_api_key_btn.setText("隐藏")
+        else:
+            self.api_key_input.setEchoMode(QLineEdit.EchoMode.Password)
+            self.show_api_key_btn.setText("显示")
+    
+    def _save_api_key(self):
+        """保存 API 密钥"""
+        api_key = self.api_key_input.text().strip()
+        
+        if not api_key:
+            QMessageBox.warning(self, "警告", "请输入 API 密钥")
+            return
+        
+        try:
+            # 保存到配置
+            llm_config = config_manager.get('llm', {})
+            llm_config['api_key'] = api_key
+            config_manager.set('llm', llm_config)
+            
+            # 更新 LLM 处理器
+            self.screenshot_ocr_manager.update_llm_api_key(api_key)
+            
+            # 更新状态显示
+            self._update_api_key_status()
+            
+            QMessageBox.information(self, "成功", "API 密钥已保存")
+            performance_logger.info("用户更新了 LLM API 密钥")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"保存 API 密钥失败: {e}")
+            performance_logger.error(f"保存 API 密钥失败: {e}")
+    
+    def _update_api_key_status(self):
+        """更新 API 密钥状态显示"""
+        try:
+            llm_config = config_manager.get('llm', {})
+            api_key = llm_config.get('api_key', '')
+            
+            if api_key:
+                # 隐藏密钥，只显示前4位和后4位
+                if len(api_key) > 8:
+                    masked_key = api_key[:4] + "*" * (len(api_key) - 8) + api_key[-4:]
+                else:
+                    masked_key = "*" * len(api_key)
+                
+                self.api_key_status_label.setText(f"已配置: {masked_key}")
+                self.api_key_status_label.setStyleSheet("color: green; font-weight: bold;")
+                
+                # 在输入框中显示当前密钥（如果为空）
+                if not self.api_key_input.text():
+                    self.api_key_input.setText(api_key)
+            else:
+                self.api_key_status_label.setText("未配置")
+                self.api_key_status_label.setStyleSheet("color: gray; font-weight: bold;")
+                
+        except Exception as e:
+            performance_logger.error(f"更新 API 密钥状态失败: {e}") 
