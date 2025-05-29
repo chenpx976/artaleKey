@@ -11,7 +11,7 @@ from artalekey.ui.components import HotkeyCard, OCRHotkeyCard
 from artalekey.ui.simple_target_selector import SimpleTargetSelector
 from artalekey.ui.simple_styles import get_adaptive_style, get_native_style
 from artalekey.ui.window_status_widget import WindowStatusWidget
-from artalekey.ui.visualization_widget import VisualizationWidget
+from artalekey.ui.qt_chart_widget import QtVisualizationWidget
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
 from artalekey.core.config import config_manager
 from artalekey.core.logger import performance_logger
@@ -165,7 +165,7 @@ class TabbedMainWindow(QMainWindow):
         layout.setSpacing(15)
         
         # 可视化组件
-        self.visualization_widget = VisualizationWidget()
+        self.visualization_widget = QtVisualizationWidget()
         layout.addWidget(self.visualization_widget)
         
         self.tab_widget.addTab(tab_widget, "可视化")
@@ -746,7 +746,7 @@ class TabbedMainWindow(QMainWindow):
                 self.screenshot_ocr_manager.update_llm_api_key(api_key)
                 
                 # 验证更新是否成功
-                if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.client:
+                if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.api_key:
                     performance_logger.info("LLM 处理器更新成功")
                     success_msg = "API 密钥已保存并成功配置 LLM 处理器"
                 else:
@@ -794,7 +794,7 @@ class TabbedMainWindow(QMainWindow):
                     self.screenshot_ocr_manager.update_llm_api_key(api_key)
                     
                     # 验证LLM处理器是否成功初始化
-                    if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.client:
+                    if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.api_key:
                         performance_logger.info("LLM 处理器 API 密钥更新成功")
                     else:
                         performance_logger.warning("LLM 处理器 API 密钥更新后，客户端仍未初始化")

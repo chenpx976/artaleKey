@@ -31,10 +31,11 @@ def check_dependencies():
         return False
         
     try:
-        import matplotlib
-        print(f"✅ matplotlib {matplotlib.__version__}")
+        from PyQt6 import QtCharts
+        print(f"✅ PyQt6-Charts 已安装")
     except ImportError:
-        print("❌ matplotlib 未安装")
+        print("❌ PyQt6-Charts 未安装")
+        print("💡 安装命令: pip install PyQt6-Charts")
         return False
         
     return True
@@ -42,15 +43,6 @@ def check_dependencies():
 def create_spec_file():
     """创建PyInstaller规格文件"""
     print("📝 创建打包配置文件...")
-    
-    # 动态获取matplotlib数据路径
-    try:
-        import matplotlib
-        mpl_data_dir = matplotlib.get_data_path()
-        print(f"📍 matplotlib数据目录: {mpl_data_dir}")
-    except ImportError:
-        print("❌ matplotlib未安装，无法获取数据目录")
-        return False
     
     spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 
@@ -68,13 +60,12 @@ a = Analysis(
         # 包含配置和资源文件
         ('artalekey/core', 'artalekey/core'),
         ('artalekey/ui', 'artalekey/ui'),
-        # 包含matplotlib数据文件
-        (r'{mpl_data_dir}', 'matplotlib/mpl-data'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
         'PyQt6.QtGui', 
         'PyQt6.QtWidgets',
+        'PyQt6.QtCharts',
         'psutil',
         'pynput',
         'AppKit',
@@ -82,16 +73,11 @@ a = Analysis(
         'Foundation',
         'Quartz',
         'objc',
-        # matplotlib相关
-        'matplotlib.backends.backend_qt5agg',
-        'matplotlib.figure',
-        'matplotlib.pyplot',
-        'matplotlib.dates',
+        # Qt Charts相关
+        'PyQt6.QtCharts',
         'numpy',
-        # LLM相关依赖
-        'openai',
-        'openai.types',
-        'openai.types.chat',
+        # LLM相关依赖 - 使用requests
+        'requests',
         'yaml',
         'json',
         're',

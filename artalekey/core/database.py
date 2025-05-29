@@ -582,6 +582,54 @@ class GameDataDatabase:
         except Exception as e:
             performance_logger.error(f"获取统计信息失败: {e}")
             return {}
+    
+    def get_unique_characters(self) -> List[str]:
+        """获取所有唯一的角色名称"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT DISTINCT character_name 
+                    FROM game_data 
+                    WHERE character_name IS NOT NULL 
+                    AND character_name != ''
+                    ORDER BY character_name
+                ''')
+                
+                rows = cursor.fetchall()
+                characters = [row[0] for row in rows if row[0] and row[0].strip()]
+                
+                performance_logger.debug(f"获取到 {len(characters)} 个唯一角色: {characters}")
+                return characters
+                
+        except Exception as e:
+            performance_logger.error(f"获取唯一角色失败: {e}")
+            return []
+    
+    def get_unique_levels(self) -> List[int]:
+        """获取所有唯一的等级"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT DISTINCT level 
+                    FROM game_data 
+                    WHERE level IS NOT NULL 
+                    AND level > 0
+                    ORDER BY level
+                ''')
+                
+                rows = cursor.fetchall()
+                levels = [row[0] for row in rows if row[0] is not None and row[0] > 0]
+                
+                performance_logger.debug(f"获取到 {len(levels)} 个唯一等级: {levels}")
+                return levels
+                
+        except Exception as e:
+            performance_logger.error(f"获取唯一等级失败: {e}")
+            return []
 
 # 全局数据库实例
 game_db = GameDataDatabase() 

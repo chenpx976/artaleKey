@@ -3,8 +3,8 @@ import base64
 import yaml
 import re
 import json
+import requests
 from typing import Optional, Dict, Any
-from openai import OpenAI
 from PIL import Image
 from io import BytesIO
 from artalekey.core.logger import performance_logger
@@ -14,33 +14,34 @@ from concurrent.futures import ThreadPoolExecutor
 import threading
 
 class LLMProcessor:
-    """LLM 图片处理器 - 使用大模型识别游戏界面信息"""
+    """LLM 图片处理器 - 使用requests直接调用OpenRouter API"""
     
     # 类级别的线程池，避免重复创建
     _thread_pool = None
     _thread_pool_lock = threading.RLock()
     
     def __init__(self):
-        self.client = None
+        self.api_key = None
+        self.base_url = "https://openrouter.ai/api/v1/chat/completions"
         self._setup_client()
         
         # 确保线程池初始化
         self._ensure_thread_pool()
         
         # LLM 提示词
-        self.prompt = """你是一个冒险岛游戏的高级玩家，可以根据我发送给你的截图，分析获取到下面的信息，输出为标准JSON格式：
+        self.prompt = """你是一个冒险岛游戏的高级玩家, 游戏语言选择了繁体中文，可以根据我发送给你的截图，分析获取到下面的信息，输出为标准JSON格式：
 
 请返回以下JSON结构，严格按照字段名输出：
 {
   "level": 角色等级 (数字),
   "character_name": "角色名称" (字符串),
-  "character_class": "角色职业" (字符串),
-  "map_name": "当前地图名称" (字符串),
+  "character_class": "角色职业" (字符串, 繁体中文),
+  "map_name": "当前地图名称" (字符串, 繁体中文),
   "max_hp": 当前等级最大HP (数字),
   "max_mp": 当前等级最大MP (数字),
   "experience_value": 当前经验值 (数字),
   "experience_percentage": 当前经验值百分比 (数字，不含%符号),
-  "money": 角色当前持有金钱 (数字)
+  "money": 角色当前持有金钱 (数字), 这个数字是在 "金幣" 的左边展示的
 }
 
 注意事项：
@@ -70,38 +71,34 @@ class LLMProcessor:
                     performance_logger.info("LLM 处理器线程池已清理")
     
     def _setup_client(self):
-        """设置 OpenAI 客户端"""
+        """设置API密钥"""
         try:
             # 从配置文件获取 API 密钥
             llm_config = config_manager.get('llm', {})
             api_key = llm_config.get('api_key', '')
             
-            performance_logger.info(f"LLM 客户端初始化 - 密钥状态: {'已设置' if api_key else '未设置'}")
+            performance_logger.info(f"LLM API密钥初始化 - 密钥状态: {'已设置' if api_key else '未设置'}")
             
             if not api_key:
-                performance_logger.warning("API 密钥为空，LLM 客户端初始化跳过")
-                self.client = None
+                performance_logger.warning("API 密钥为空，LLM 处理器初始化跳过")
+                self.api_key = None
                 return
             
             # 验证密钥格式
             if len(api_key) < 10:
                 performance_logger.error(f"API 密钥格式可能不正确，长度: {len(api_key)}")
-                self.client = None
+                self.api_key = None
                 return
             
-            self.client = OpenAI(
-                base_url="https://openrouter.ai/api/v1",
-                api_key=api_key,
-            )
-            
-            performance_logger.info(f"LLM 客户端初始化成功，密钥长度: {len(api_key)}")
+            self.api_key = api_key
+            performance_logger.info(f"LLM API密钥设置成功，密钥长度: {len(api_key)}")
             
         except Exception as e:
-            performance_logger.error(f"LLM 客户端初始化失败: {e}")
-            self.client = None
+            performance_logger.error(f"LLM API密钥设置失败: {e}")
+            self.api_key = None
     
     def update_api_key(self, api_key: str):
-        """更新 API 密钥并重新初始化客户端"""
+        """更新 API 密钥"""
         try:
             performance_logger.info(f"更新 API 密钥 - 新密钥长度: {len(api_key) if api_key else 0}")
             
@@ -110,18 +107,18 @@ class LLMProcessor:
             llm_config['api_key'] = api_key
             config_manager.set('llm', llm_config)
             
-            # 重新初始化客户端
-            self._setup_client()
+            # 重新设置密钥
+            self.api_key = api_key if api_key and len(api_key) >= 10 else None
             
-            # 验证客户端是否成功初始化
-            if self.client:
-                performance_logger.info("API 密钥更新成功，LLM 客户端已重新初始化")
+            # 验证设置是否成功
+            if self.api_key:
+                performance_logger.info("API 密钥更新成功")
             else:
-                performance_logger.error("API 密钥更新后，LLM 客户端初始化失败")
+                performance_logger.error("API 密钥更新后验证失败")
             
         except Exception as e:
             performance_logger.error(f"更新 API 密钥失败: {e}")
-            self.client = None
+            self.api_key = None
     
     def _image_to_base64(self, image: Image.Image) -> str:
         """将图片转换为 base64 编码"""
@@ -231,8 +228,8 @@ class LLMProcessor:
     
     def process_image(self, image: Image.Image) -> Dict[str, Any]:
         """处理图片并提取游戏数据"""
-        if not self.client:
-            performance_logger.error("LLM 客户端未初始化，请检查 API 密钥配置")
+        if not self.api_key:
+            performance_logger.error("API 密钥未设置，请检查配置")
             return {}
         
         try:
@@ -243,39 +240,59 @@ class LLMProcessor:
             if not image_base64:
                 return {}
             
-            # 构建消息
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "text",
-                            "text": self.prompt
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{image_base64}"
-                            }
-                        }
-                    ]
-                }
-            ]
+            # 构建请求数据
+            headers = {
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://artalekey.app",
+                "X-Title": "ArtaleKey",
+            }
             
-            # 调用 LLM API - 使用新的参数格式
-            completion = self.client.chat.completions.create(
-                extra_headers={
-                    "HTTP-Referer": "https://artalekey.app",
-                    "X-Title": "ArtaleKey",
-                },
-                extra_body={},
-                model="qwen/qwen2.5-vl-72b-instruct:free",
-                messages=messages,
-                max_tokens=1000,
-                temperature=0.1  # 降低随机性，提高一致性
+            data = {
+                "model": "qwen/qwen2.5-vl-72b-instruct:free",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": self.prompt
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{image_base64}"
+                                }
+                            }
+                        ]
+                    }
+                ],
+                "max_tokens": 1000,
+                "temperature": 0.1
+            }
+            
+            # 发送请求
+            performance_logger.info("发送请求到 OpenRouter API...")
+            response = requests.post(
+                self.base_url,
+                headers=headers,
+                data=json.dumps(data),
+                timeout=30
             )
             
-            response_text = completion.choices[0].message.content
+            # 检查响应状态
+            if response.status_code != 200:
+                performance_logger.error(f"API 请求失败，状态码: {response.status_code}, 响应: {response.text}")
+                return {}
+            
+            # 解析响应
+            response_data = response.json()
+            
+            if 'choices' not in response_data or not response_data['choices']:
+                performance_logger.error(f"API 响应格式错误: {response_data}")
+                return {}
+            
+            response_text = response_data['choices'][0]['message']['content']
             performance_logger.info(f"LLM 原始响应: {response_text}")
             
             # 解析响应
@@ -287,6 +304,12 @@ class LLMProcessor:
             performance_logger.info(f"LLM 处理完成，提取数据: {game_data}")
             return game_data
             
+        except requests.exceptions.Timeout:
+            performance_logger.error("LLM API 请求超时")
+            return {}
+        except requests.exceptions.RequestException as e:
+            performance_logger.error(f"LLM API 请求异常: {e}")
+            return {}
         except Exception as e:
             performance_logger.error(f"LLM 图片处理失败: {e}")
             return {}

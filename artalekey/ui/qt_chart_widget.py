@@ -2,33 +2,26 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
     QComboBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
 )
-from PyQt6.QtCore import QTimer, pyqtSignal, QSettings
-from PyQt6.QtGui import QFont
-import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import matplotlib.dates as mdates
-from matplotlib.ticker import MaxNLocator
+from PyQt6.QtCore import QTimer, pyqtSignal, QSettings, QDateTime, Qt, QMargins
+from PyQt6.QtGui import QFont, QPainter, QBrush, QColor
+from PyQt6.QtCharts import QChart, QChartView, QLineSeries, QValueAxis, QDateTimeAxis
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
-import numpy as np
 import pytz
-import json
 
 from artalekey.core.database import game_db
 from artalekey.core.logger import performance_logger
 
-class VisualizationWidget(QWidget):
-    """经验获取效率可视化组件"""
+class QtVisualizationWidget(QWidget):
+    """Qt原生图表的经验获取效率可视化组件 - 替代matplotlib"""
     
     refresh_requested = pyqtSignal()
     
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.settings = QSettings('ArtaleKey', 'VisualizationWidget')
+        self.settings = QSettings('ArtaleKey', 'QtVisualizationWidget')
         # 设置北京时区
         self.beijing_tz = pytz.timezone('Asia/Shanghai')
-        self._setup_matplotlib()
         
         # 添加防重复刷新机制
         self._refreshing = False
@@ -38,15 +31,7 @@ class VisualizationWidget(QWidget):
         
         self.init_ui()
         # 延迟刷新，让界面先显示
-        QTimer.singleShot(3000, self.refresh_data)  # 3秒后刷新一次
-    
-    def _setup_matplotlib(self):
-        """设置matplotlib中文字体"""
-        plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
-        plt.rcParams['axes.unicode_minus'] = False
-        # 限制最大tick数量，避免性能问题
-        plt.rcParams['axes.formatter.limits'] = [-5, 6]
-        plt.rcParams['figure.max_open_warning'] = 0  # 禁用最大打开图形警告
+        QTimer.singleShot(1000, self.refresh_data)  # 1秒后刷新一次
     
     def _convert_to_beijing_time(self, time_str: str) -> datetime:
         """将数据库时间字符串转换为北京时间"""
@@ -124,8 +109,8 @@ class VisualizationWidget(QWidget):
         control_group = self._create_control_panel()
         layout.addWidget(control_group)
         
-        # 经验趋势图
-        chart_group = self._create_chart_panel()
+        # Qt Charts图表
+        chart_group = self._create_qt_chart_panel()
         layout.addWidget(chart_group, stretch=2)
         
         # 经验增长统计表
@@ -137,7 +122,7 @@ class VisualizationWidget(QWidget):
         group = QGroupBox("控制面板")
         layout = QHBoxLayout(group)
         
-        # 角色筛选 - 新增
+        # 角色筛选
         layout.addWidget(QLabel("角色筛选:"))
         self.character_combo = QComboBox()
         self.character_combo.addItem("全部角色", None)
@@ -168,15 +153,25 @@ class VisualizationWidget(QWidget):
         
         return group
     
-    def _create_chart_panel(self) -> QGroupBox:
-        """创建图表面板"""
-        group = QGroupBox("经验增长趋势")
+    def _create_qt_chart_panel(self) -> QGroupBox:
+        """创建Qt Charts图表面板"""
+        group = QGroupBox("经验增长趋势 (Qt原生)")
         layout = QVBoxLayout(group)
         
-        # 创建matplotlib图表
-        self.figure = Figure(figsize=(12, 6), dpi=100)
-        self.canvas = FigureCanvas(self.figure)
-        layout.addWidget(self.canvas)
+        # 创建图表
+        self.chart = QChart()
+        self.chart.setTitle("经验增长趋势")
+        self.chart.setAnimationOptions(QChart.AnimationOption.SeriesAnimations)
+        
+        # 设置图表样式 - 使用正确的API方法名
+        self.chart.setBackgroundBrush(QBrush(QColor(255, 255, 255)))  # 白色背景
+        self.chart.setPlotAreaBackgroundBrush(QBrush(QColor(250, 250, 250)))  # 浅灰色绘图区背景
+        self.chart.setPlotAreaBackgroundVisible(True)
+        
+        # 创建图表视图
+        self.chart_view = QChartView(self.chart)
+        self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        layout.addWidget(self.chart_view)
         
         # 状态标签
         self.chart_status_label = QLabel("正在加载图表数据...")
@@ -192,7 +187,7 @@ class VisualizationWidget(QWidget):
         
         # 创建表格
         self.stats_table = QTableWidget()
-        self.stats_table.setColumnCount(7)  # 调整为7列
+        self.stats_table.setColumnCount(7)
         self.stats_table.setHorizontalHeaderLabels([
             "起始时间", "结束时间", "间隔时间", "经验增长", "等级", "预估十分钟", "结束经验值"
         ])
@@ -223,42 +218,25 @@ class VisualizationWidget(QWidget):
         elif "24小时" in text:
             return 24
         elif "3天" in text:
-            return 72  # 3 * 24
+            return 72
         elif "7天" in text:
-            return 168  # 7 * 24
-        return 24  # 默认24小时
+            return 168
+        return 24
     
     def get_selected_character(self):
         """获取选择的角色过滤"""
         return self.character_combo.currentData()
     
-    def save_selected_character(self, character):
-        """保存选择的角色"""
-        self.settings.setValue('selected_character', character)
-    
-    def load_selected_character(self):
-        """加载保存的角色选择"""
-        return self.settings.value('selected_character', None)
-    
     def get_selected_level(self):
         """获取选择的等级过滤"""
         return self.level_combo.currentData()
     
-    def save_selected_level(self, level):
-        """保存选择的等级"""
-        self.settings.setValue('selected_level', level)
-    
-    def load_selected_level(self):
-        """加载保存的等级选择"""
-        return self.settings.value('selected_level', None)
-    
     def refresh_data(self):
-        """刷新数据 - 添加防重复刷新机制"""
+        """刷新数据"""
         if self._refreshing:
             performance_logger.debug("正在刷新中，跳过重复刷新请求")
             return
         
-        # 延迟200ms执行刷新，避免短时间内多次刷新
         self._refresh_timer.start(200)
     
     def _delayed_refresh(self):
@@ -268,107 +246,55 @@ class VisualizationWidget(QWidget):
         
         self._refreshing = True
         try:
-            performance_logger.debug("开始刷新可视化数据")
-            
-            # 更新角色下拉框
             self._update_character_combo()
-            
-            # 更新等级下拉框
             self._update_level_combo()
-            
-            # 刷新图表
-            self.refresh_chart()
-            
-            # 刷新统计表
+            self.refresh_qt_chart()
             self.refresh_stats_table()
-            
-            self.refresh_requested.emit()
-            
-        except Exception as e:
-            performance_logger.error(f"刷新可视化数据失败: {e}")
         finally:
             self._refreshing = False
     
     def _update_character_combo(self):
         """更新角色下拉框"""
         try:
-            # 获取所有存在的角色
-            data = game_db.get_data_history(1000)
-            characters = set()
-            for record in data:
-                character_name = record.get('character_name')
-                if character_name and isinstance(character_name, str) and character_name.strip():
-                    characters.add(character_name.strip())
-            
-            # 保存当前选择
-            current_character = self.get_selected_character()
-            if current_character is None:
-                # 尝试加载保存的角色选择
-                current_character = self.load_selected_character()
-            
-            # 清空并重新填充
+            current_selection = self.get_selected_character()
             self.character_combo.clear()
             self.character_combo.addItem("全部角色", None)
             
-            for character in sorted(characters):
+            characters = game_db.get_unique_characters()
+            for character in characters:
                 self.character_combo.addItem(character, character)
             
-            # 恢复选择
-            if current_character is not None:
-                index = self.character_combo.findData(current_character)
-                if index >= 0:
-                    self.character_combo.setCurrentIndex(index)
-                else:
-                    # 如果保存的角色不存在，清除保存的设置
-                    self.settings.remove('selected_character')
-            
+            # 恢复之前的选择
+            if current_selection:
+                for i in range(self.character_combo.count()):
+                    if self.character_combo.itemData(i) == current_selection:
+                        self.character_combo.setCurrentIndex(i)
+                        break
         except Exception as e:
             performance_logger.error(f"更新角色下拉框失败: {e}")
     
     def _update_level_combo(self):
         """更新等级下拉框"""
         try:
-            # 获取当前选择的角色
-            selected_character = self.get_selected_character()
-            
-            # 获取所有存在的等级（根据角色过滤）
-            data = game_db.get_data_history(1000)
-            levels = set()
-            for record in data:
-                # 角色过滤
-                if selected_character is not None:
-                    character_name = record.get('character_name')
-                    if character_name != selected_character:
-                        continue
-                
-                level = record.get('level')
-                if level and isinstance(level, int) and level > 0:
-                    levels.add(level)
-            
-            # 保存当前选择
-            current_level = self.get_selected_level()
-            if current_level is None:
-                # 尝试加载保存的等级选择
-                current_level = self.load_selected_level()
-            
-            # 清空并重新填充
+            current_selection = self.get_selected_level()
             self.level_combo.clear()
             self.level_combo.addItem("全部等级", None)
             
+            levels = game_db.get_unique_levels()
             for level in sorted(levels):
                 self.level_combo.addItem(f"等级 {level}", level)
             
-            # 恢复选择（如果该等级在当前角色中存在）
-            if current_level is not None and current_level in levels:
-                index = self.level_combo.findData(current_level)
-                if index >= 0:
-                    self.level_combo.setCurrentIndex(index)
-            
+            # 恢复之前的选择
+            if current_selection:
+                for i in range(self.level_combo.count()):
+                    if self.level_combo.itemData(i) == current_selection:
+                        self.level_combo.setCurrentIndex(i)
+                        break
         except Exception as e:
             performance_logger.error(f"更新等级下拉框失败: {e}")
     
-    def refresh_chart(self):
-        """刷新经验趋势图"""
+    def refresh_qt_chart(self):
+        """刷新Qt Charts图表"""
         try:
             self.chart_status_label.setText("正在加载图表数据...")
             
@@ -383,168 +309,124 @@ class VisualizationWidget(QWidget):
                 hours_limit=hours_limit
             )
             
-            performance_logger.debug(f"可视化图表获取到 {len(data)} 条数据")
+            performance_logger.debug(f"Qt图表获取到 {len(data)} 条数据")
             
-            # 清空图表
-            self.figure.clear()
-            ax = self.figure.add_subplot(111)
+            # 清空现有系列和坐标轴
+            self.chart.removeAllSeries()
+            # 移除所有坐标轴，防止出现重复的Y轴
+            for axis in self.chart.axes():
+                self.chart.removeAxis(axis)
             
             if not data:
-                ax.text(0.5, 0.5, '暂无数据', ha='center', va='center', transform=ax.transAxes, 
-                       fontsize=16, color='gray')
+                self.chart.setTitle("")  # 移除标题
                 self.chart_status_label.setText("暂无数据显示")
-                self.canvas.draw()
                 return
+            
+            # 创建数据系列
+            series = QLineSeries()
+            series.setName("经验值")
+            
+            # 设置线条样式
+            pen = series.pen()
+            pen.setWidth(3)  # 设置线条宽度
+            series.setPen(pen)
+            
+            # 设置数据点样式
+            series.setPointsVisible(True)  # 显示数据点
+            series.setPointLabelsVisible(False)  # 不显示数据点标签，避免过于拥挤
             
             # 准备数据
-            times = []
-            exp_values = []
-            exp_percentages = []
-            levels = []
-            
+            valid_data = []
             for record in data:
                 try:
-                    # 解析时间
-                    time_str = record['created_at']
-                    dt = self._convert_to_beijing_time(time_str)
-                    times.append(dt)
+                    # 解析时间和经验值 - 使用created_at而不是timestamp进行图表绘制
+                    created_at_str = record.get('created_at', '')
+                    experience_data = record.get('experience', {})
                     
-                    # 解析经验 - 增强数据验证
-                    experience = record.get('experience')
-                    if isinstance(experience, dict):
-                        exp_value = experience.get('value', 0)
-                        exp_percentage = experience.get('percentage', 0)
+                    if isinstance(experience_data, str):
+                        import json
+                        experience_data = json.loads(experience_data)
+                    
+                    exp_value = experience_data.get('value')
+                    if exp_value is not None and created_at_str:
+                        # 转换时间为QDateTime
+                        beijing_dt = self._convert_to_beijing_time(created_at_str)
+                        qdatetime = QDateTime.fromString(beijing_dt.strftime('%Y-%m-%d %H:%M:%S'), 'yyyy-MM-dd hh:mm:ss')
                         
-                        # 确保是有效数字
-                        if isinstance(exp_value, (int, float)) and exp_value >= 0:
-                            exp_values.append(exp_value)
-                        else:
-                            exp_values.append(0)
-                            
-                        if isinstance(exp_percentage, (int, float)) and 0 <= exp_percentage <= 100:
-                            exp_percentages.append(exp_percentage)
-                        else:
-                            exp_percentages.append(0)
-                    elif isinstance(experience, (int, float)) and experience >= 0:
-                        # 兼容旧格式：直接是数字
-                        exp_values.append(experience)
-                        exp_percentages.append(0)
-                    else:
-                        exp_values.append(0)
-                        exp_percentages.append(0)
-                    
-                    # 解析等级
-                    level = record.get('level', 0)
-                    if isinstance(level, (int, float)) and level > 0:
-                        levels.append(level)
-                    else:
-                        levels.append(0)
-                    
+                        if qdatetime.isValid():
+                            timestamp_ms = qdatetime.toMSecsSinceEpoch()
+                            valid_data.append((timestamp_ms, exp_value))
+                
                 except Exception as e:
-                    performance_logger.warning(f"解析记录失败: {e}, 记录: {record}")
+                    performance_logger.warning(f"解析数据点失败: {e}")
                     continue
             
-            if not times or len(times) != len(exp_values):
-                ax.text(0.5, 0.5, '数据解析失败', ha='center', va='center', transform=ax.transAxes,
-                       fontsize=16, color='red')
-                self.chart_status_label.setText(f"数据解析失败，原始数据: {len(data)} 条，解析成功: {len(times)} 条")
-                self.canvas.draw()
+            if not valid_data:
+                self.chart.setTitle("")  # 移除标题
+                self.chart_status_label.setText("数据解析失败")
                 return
             
-            performance_logger.info(f"成功解析 {len(times)} 条时间数据，{len(exp_values)} 条经验数据")
+            # 按时间排序
+            valid_data.sort(key=lambda x: x[0])
             
-            # 绘制经验值趋势
-            try:
-                ax.plot(times, exp_values, 'b-', linewidth=2, marker='o', markersize=4, 
-                       label=f'经验值 (共{len(exp_values)}个数据点)')
-                performance_logger.info("成功绘制经验值趋势线")
-            except Exception as e:
-                performance_logger.error(f"绘制趋势线失败: {e}")
-                ax.text(0.5, 0.5, f'绘图失败: {e}', ha='center', va='center', transform=ax.transAxes,
-                       fontsize=12, color='red')
-                self.canvas.draw()
-                return
+            # 添加数据点到系列
+            for timestamp_ms, exp_value in valid_data:
+                series.append(timestamp_ms, exp_value)
             
-            # 设置x轴格式和范围
-            if times:
-                try:
-                    # 设置x轴范围，减少空白
-                    start_time = min(times)
-                    end_time = max(times)
-                    time_span = end_time - start_time
-                    
-                    # 检查时间跨度，避免生成过多tick
-                    total_seconds = time_span.total_seconds()
-                    
-                    # 简化时间轴处理，避免复杂的条件判断
-                    if total_seconds < 3600:  # 少于1小时
-                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                        ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=max(1, int(total_seconds / 360))))
-                    elif total_seconds < 86400:  # 少于24小时
-                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                        ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, int(total_seconds / 21600))))
-                    else:
-                        ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-                        ax.xaxis.set_major_locator(mdates.HourLocator(interval=max(1, int(total_seconds / 86400))))
-                    
-                    # 禁用小刻度
-                    ax.xaxis.set_minor_locator(plt.NullLocator())
-                    
-                    # 强制限制最大tick数量
-                    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, prune='both'))
-                    
-                    # 设置x轴范围
-                    if total_seconds > 0:
-                        margin = time_span * 0.05
-                        ax.set_xlim(start_time - margin, end_time + margin)
-                    
-                    performance_logger.info("成功设置X轴格式")
-                except Exception as e:
-                    performance_logger.warning(f"设置X轴格式失败: {e}")
+            # 添加系列到图表
+            self.chart.addSeries(series)
             
-            # 设置y轴格式，让数值更易读
-            if exp_values:
-                try:
-                    min_exp = min(exp_values)
-                    max_exp = max(exp_values)
-                    exp_range = max_exp - min_exp
-                    
-                    # 如果经验值变化不大，设置合适的y轴范围
-                    if exp_range > 0:
-                        margin_y = exp_range * 0.1  # 10%的边距
-                        ax.set_ylim(min_exp - margin_y, max_exp + margin_y)
-                    
-                    # 格式化y轴标签，使用千分位分隔符
-                    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'{int(x):,}'))
-                    
-                    performance_logger.info("成功设置Y轴格式")
-                except Exception as e:
-                    performance_logger.warning(f"设置Y轴格式失败: {e}")
+            # 设置图表样式 - 移除标题，扩大绘图区域
+            self.chart.setTitle("")  # 移除标题
+            self.chart.legend().setVisible(False)  # 隐藏图例
+            # 使用QMargins对象而不是set
+            self.chart.setMargins(QMargins(0, 0, 0, 0))  # 移除边距
             
-            # 设置标题和标签 - 更新标题以包含角色信息
-            try:
-                character_text = character_filter if character_filter else "全部角色"
-                level_text = f"等级{level_filter}" if level_filter else "全部等级"
-                ax.set_title(f'经验增长趋势 - {character_text} {level_text} (最近{hours_limit}小时)', fontsize=14, fontweight='bold')
-                ax.set_xlabel('时间', fontsize=12)
-                ax.set_ylabel('经验值', fontsize=12)
-                ax.legend(loc='upper left')
+            # 设置坐标轴
+            if len(valid_data) > 1:
+                # X轴 - 时间轴（显示轴线但不显示标签）
+                axis_x = QDateTimeAxis()
+                axis_x.setLabelsVisible(False)  # 隐藏X轴标签
+                axis_x.setTitleText("")  # 移除X轴标题
                 
-                # 优化网格样式
-                ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5)
-                ax.set_facecolor('#fafafa')  # 设置浅灰色背景
+                min_time = min(valid_data, key=lambda x: x[0])[0]
+                max_time = max(valid_data, key=lambda x: x[0])[0]
                 
-                # 旋转x轴标签并优化间距
-                plt.setp(ax.xaxis.get_majorticklabels(), rotation=45, ha='right')
+                axis_x.setMin(QDateTime.fromMSecsSinceEpoch(min_time))
+                axis_x.setMax(QDateTime.fromMSecsSinceEpoch(max_time))
                 
-                # 调整布局，减少边距
-                self.figure.tight_layout(pad=1.0)
+                self.chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+                series.attachAxis(axis_x)
                 
-                performance_logger.info("成功设置图表样式")
-            except Exception as e:
-                performance_logger.warning(f"设置图表样式失败: {e}")
+                # Y轴 - 经验值轴（只显示最大值和最小值）
+                axis_y = QValueAxis()
+                axis_y.setTitleText("")  # 移除Y轴标题
+                
+                min_exp = min(valid_data, key=lambda x: x[1])[1]
+                max_exp = max(valid_data, key=lambda x: x[1])[1]
+                exp_range = max_exp - min_exp
+                
+                if exp_range > 0:
+                    margin = exp_range * 0.05  # 减少边距
+                    axis_y.setMin(min_exp - margin)
+                    axis_y.setMax(max_exp + margin)
+                else:
+                    axis_y.setMin(min_exp - 1000)
+                    axis_y.setMax(max_exp + 1000)
+                
+                # 设置Y轴只显示最大值和最小值
+                axis_y.setTickCount(2)  # 只显示2个刻度：最大值和最小值
+                axis_y.setLabelFormat("%.0f")  # 整数格式
+                
+                # 设置Y轴样式
+                axis_y.setGridLineVisible(False)  # 隐藏网格线
+                axis_y.setMinorTickCount(0)  # 不显示小刻度
+                
+                self.chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+                series.attachAxis(axis_y)
             
             # 更新状态
+            exp_values = [item[1] for item in valid_data]
             if exp_values:
                 min_exp = min(exp_values)
                 max_exp = max(exp_values)
@@ -555,25 +437,16 @@ class VisualizationWidget(QWidget):
                 )
             else:
                 self.chart_status_label.setText("无有效数据")
-            
-            self.canvas.draw()
-            performance_logger.info("图表刷新完成")
+                
+            performance_logger.info("Qt图表刷新完成")
             
         except Exception as e:
-            performance_logger.error(f"刷新图表失败: {e}")
+            performance_logger.error(f"刷新Qt图表失败: {e}")
             self.chart_status_label.setText(f"图表加载失败: {e}")
-            # 显示错误信息图表
-            try:
-                self.figure.clear()
-                ax = self.figure.add_subplot(111)
-                ax.text(0.5, 0.5, f'图表加载失败\n错误: {e}', ha='center', va='center', 
-                       transform=ax.transAxes, fontsize=12, color='red')
-                self.canvas.draw()
-            except:
-                pass
+            self.chart.setTitle("")
     
     def _get_filtered_visualization_data(self, character_filter=None, level_filter=None, hours_limit=24):
-        """获取带角色和等级过滤的可视化数据 - 简化调试"""
+        """获取带角色和等级过滤的可视化数据"""
         try:
             # 获取原始数据
             data = game_db.get_data_history(1000)
@@ -585,82 +458,56 @@ class VisualizationWidget(QWidget):
             
             # 过滤数据
             filtered_data = []
-            current_time = datetime.now()
-            
-            valid_count = 0
-            time_filtered_count = 0
-            character_filtered_count = 0 
-            level_filtered_count = 0
-            exp_filtered_count = 0
+            # 确保当前时间有时区信息，使用北京时区
+            current_time = datetime.now(self.beijing_tz)
             
             for record in data:
                 try:
-                    # 时间过滤
-                    created_at = datetime.strptime(record['created_at'], '%Y-%m-%d %H:%M:%S')
-                    time_diff = current_time - created_at
-                    if time_diff > timedelta(hours=hours_limit):
-                        time_filtered_count += 1
-                        continue
+                    # 时间过滤 - 使用created_at字段而不是timestamp字段
+                    created_at_str = record.get('created_at', '')
+                    if created_at_str:
+                        record_time = self._convert_to_beijing_time(created_at_str)
+                        # 确保record_time也有时区信息
+                        if record_time.tzinfo is None:
+                            record_time = self.beijing_tz.localize(record_time)
+                        
+                        time_diff = (current_time - record_time).total_seconds()
+                        if time_diff > hours_limit * 3600:
+                            continue
                     
                     # 角色过滤
-                    if character_filter is not None:
-                        character_name = record.get('character_name')
+                    if character_filter:
+                        character_name = record.get('character_name', '')
                         if character_name != character_filter:
-                            character_filtered_count += 1
                             continue
                     
                     # 等级过滤
-                    if level_filter is not None:
+                    if level_filter:
                         level = record.get('level')
                         if level != level_filter:
-                            level_filtered_count += 1
                             continue
                     
-                    # 经验数据验证 - 简化逻辑
-                    experience = record.get('experience')
-                    has_valid_exp = False
+                    # 经验值过滤
+                    experience_data = record.get('experience', {})
+                    if isinstance(experience_data, str):
+                        import json
+                        experience_data = json.loads(experience_data)
                     
-                    if experience:
-                        if isinstance(experience, dict):
-                            # 已经是字典格式
-                            exp_value = experience.get('value', 0)
-                            if isinstance(exp_value, (int, float)) and exp_value > 0:
-                                has_valid_exp = True
-                        elif isinstance(experience, str):
-                            # 是字符串，尝试解析JSON
-                            try:
-                                exp_dict = json.loads(experience)
-                                if isinstance(exp_dict, dict):
-                                    exp_value = exp_dict.get('value', 0)
-                                    if isinstance(exp_value, (int, float)) and exp_value > 0:
-                                        # 更新record中的experience为解析后的字典
-                                        record['experience'] = exp_dict
-                                        has_valid_exp = True
-                            except json.JSONDecodeError:
-                                pass  # 静默忽略JSON解析错误
-                        elif isinstance(experience, (int, float)) and experience > 0:
-                            # 旧格式，直接是数字
-                            has_valid_exp = True
+                    exp_value = experience_data.get('value')
+                    if exp_value is None or exp_value <= 0:
+                        continue
                     
-                    if has_valid_exp:
-                        filtered_data.append(record)
-                        valid_count += 1
-                    else:
-                        exp_filtered_count += 1
-                        
+                    filtered_data.append(record)
+                    
                 except Exception as e:
-                    performance_logger.debug(f"处理记录时出错: {e}")
+                    performance_logger.warning(f"过滤数据记录失败: {e}")
                     continue
             
-            # 简化的过滤统计
-            performance_logger.info(f"📊 可视化数据过滤: 原始{len(data)}条 → 有效{valid_count}条 "
-                                   f"(时间过滤{time_filtered_count}, 角色过滤{character_filtered_count}, "
-                                   f"等级过滤{level_filtered_count}, 经验无效{exp_filtered_count})")
-            
+            performance_logger.info(f"📊 过滤后获得 {len(filtered_data)} 条有效数据")
             return filtered_data
             
         except Exception as e:
-            performance_logger.error(f"获取过滤数据失败: {e}")
+            performance_logger.error(f"获取可视化数据失败: {e}")
             return []
     
     def refresh_stats_table(self):
@@ -842,32 +689,13 @@ class VisualizationWidget(QWidget):
         return growth_records
     
     def on_character_filter_changed(self):
-        """角色过滤变更 - 添加防重复刷新"""
-        # 保存选择的角色
-        selected_character = self.get_selected_character()
-        self.save_selected_character(selected_character)
-        
-        # 当角色改变时，更新等级下拉框（不同角色可能有不同等级）
-        self._update_level_combo()
-        
-        # 使用延迟刷新避免重复调用
+        """角色筛选变更"""
         self.refresh_data()
     
     def on_level_filter_changed(self):
-        """等级过滤变更 - 添加防重复刷新"""
-        # 保存选择的等级
-        selected_level = self.get_selected_level()
-        self.save_selected_level(selected_level)
-        
-        # 使用延迟刷新避免重复调用
+        """等级筛选变更"""
         self.refresh_data()
     
     def on_time_range_changed(self):
-        """时间范围变更 - 只刷新图表"""
-        # 只刷新图表，不需要更新下拉框
-        if not self._refreshing:
-            self.refresh_chart()
-    
-    def closeEvent(self, event):
-        """关闭事件"""
-        event.accept() 
+        """时间范围变更"""
+        self.refresh_data() 
