@@ -4,9 +4,8 @@ import json
 import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
-from PIL import Image, ImageGrab, ImageEnhance, ImageFilter
+from PIL import Image, ImageGrab
 import cv2
 import numpy as np
 from artalekey.core.logger import performance_logger
@@ -15,7 +14,7 @@ from artalekey.core.window_detector import WindowDetector
 from artalekey.core.database import game_db, _get_app_data_dir
 
 class EnhancedOCRManager(QThread):
-    """增强的OCR管理器 - 使用多种OCR引擎，专门优化橙色背景白色文字识别"""
+    """增强的OCR管理器 - 使用EasyOCR和橙色背景优化处理"""
     
     # 信号定义
     ocr_triggered = pyqtSignal()       # OCR触发信号
@@ -32,9 +31,6 @@ class EnhancedOCRManager(QThread):
         self._easyocr_reader = None
         self._ocr_engine_loaded = False
         self._engine_loading = False
-        
-        # Tesseract支持
-        self._tesseract_available = False
         
         # 性能优化缓存
         self._last_screenshot_hash = None
@@ -64,35 +60,26 @@ class EnhancedOCRManager(QThread):
         performance_logger.info(f"OCR输出文件夹设置为: {self._output_folder}")
     
     def _load_ocr_engines(self):
-        """加载所有可用的OCR引擎"""
+        """加载EasyOCR引擎"""
         if self._ocr_engine_loaded or self._engine_loading:
             return
             
         self._engine_loading = True
         try:
             # 加载EasyOCR
-            performance_logger.info("开始加载OCR引擎...")
+            performance_logger.info("开始加载EasyOCR引擎...")
             start_time = time.time()
             
             import easyocr
-            # 优化：只加载英文，禁用GPU以提高兼容性
+            # 只加载英文，禁用GPU以提高兼容性
             self._easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
-            
-            # 尝试加载Tesseract
-            try:
-                import pytesseract
-                self._tesseract_available = True
-                performance_logger.info("Tesseract OCR引擎可用")
-            except ImportError:
-                performance_logger.warning("Tesseract OCR引擎不可用，将只使用EasyOCR")
-                self._tesseract_available = False
             
             load_time = time.time() - start_time
             self._ocr_engine_loaded = True
-            performance_logger.info(f"OCR引擎加载成功，耗时: {load_time:.2f}秒")
+            performance_logger.info(f"EasyOCR引擎加载成功，耗时: {load_time:.2f}秒")
             
         except Exception as e:
-            performance_logger.error(f"OCR引擎加载失败: {e}")
+            performance_logger.error(f"EasyOCR引擎加载失败: {e}")
             self._ocr_engine_loaded = False
         finally:
             self._engine_loading = False
@@ -103,85 +90,6 @@ class EnhancedOCRManager(QThread):
         small_image = image.resize((64, 64))
         image_array = np.array(small_image)
         return str(hash(image_array.tobytes()))
-    
-    def _preprocess_image_parallel(self, image: Image.Image) -> List[Tuple[str, np.ndarray]]:
-        """并行处理图像预处理 - 根据配置决定使用哪些预处理方法"""
-        # 转换为RGB模式的原始图片
-        if image.mode == 'RGBA':
-            background = Image.new('RGB', image.size, (255, 255, 255))
-            background.paste(image, mask=image.split()[-1])
-            original_image = background
-        elif image.mode != 'RGB':
-            original_image = image.convert('RGB')
-        else:
-            original_image = image.copy()
-        
-        # 转换为numpy数组
-        original_array = np.array(original_image)
-        
-        processed_results = []
-        
-        # 获取预处理配置
-        preprocessing_config = self._config.get('preprocessing', {})
-        
-        # 定义所有预处理任务 - 默认只启用orange_optimized
-        preprocessing_tasks = []
-        
-        # 橙色背景优化处理 - 默认启用
-        if preprocessing_config.get('orange_optimized', True):
-            preprocessing_tasks.append(('orange_optimized', self._process_orange_background_text, original_array.copy()))
-        
-        # 其他预处理方法 - 需要配置启用
-        if preprocessing_config.get('standard', False):
-            preprocessing_tasks.append(('standard', self._standard_preprocessing, original_image))
-        
-        if preprocessing_config.get('high_contrast', False):
-            preprocessing_tasks.append(('high_contrast', self._high_contrast_processing, original_array.copy()))
-        
-        if preprocessing_config.get('color_separated', False):
-            preprocessing_tasks.append(('color_separated', self._color_separation_processing, original_array.copy()))
-        
-        # 如果没有启用任何预处理方法，至少使用orange_optimized
-        if not preprocessing_tasks:
-            preprocessing_tasks.append(('orange_optimized', self._process_orange_background_text, original_array.copy()))
-        
-        # 使用线程池并行处理
-        with ThreadPoolExecutor(max_workers=min(4, len(preprocessing_tasks))) as executor:
-            # 提交所有任务
-            future_to_method = {}
-            for method_name, method_func, input_data in preprocessing_tasks:
-                future = executor.submit(method_func, input_data)
-                future_to_method[future] = method_name
-            
-            # 收集结果
-            for future in as_completed(future_to_method):
-                method_name = future_to_method[future]
-                try:
-                    result = future.result()
-                    processed_results.append((method_name, result))
-                    performance_logger.debug(f"预处理完成: {method_name}")
-                except Exception as e:
-                    performance_logger.error(f"预处理方法 {method_name} 失败: {e}")
-        
-        # 按原始顺序排序结果
-        method_order = ['orange_optimized', 'standard', 'high_contrast', 'color_separated']
-        processed_results.sort(key=lambda x: method_order.index(x[0]) if x[0] in method_order else 999)
-        
-        performance_logger.info(f"图像预处理完成，生成了 {len(processed_results)} 种处理版本")
-        return processed_results
-    
-    def _standard_preprocessing(self, image: Image.Image) -> np.ndarray:
-        """标准预处理方法"""
-        enhancer = ImageEnhance.Contrast(image)
-        image = enhancer.enhance(1.15)
-        
-        enhancer = ImageEnhance.Color(image)
-        image = enhancer.enhance(1.1)
-        
-        enhancer = ImageEnhance.Sharpness(image)
-        image = enhancer.enhance(1.05)
-        
-        return np.array(image)
     
     def _process_orange_background_text(self, img_array: np.ndarray) -> np.ndarray:
         """专门处理橙色背景白色文字"""
@@ -226,61 +134,6 @@ class EnhancedOCRManager(QThread):
             
         except Exception as e:
             performance_logger.error(f"橙色背景处理失败: {e}")
-            return img_array
-    
-    def _high_contrast_processing(self, img_array: np.ndarray) -> np.ndarray:
-        """高对比度处理"""
-        try:
-            # 转换为灰度
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-            
-            # 自适应直方图均衡化
-            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
-            enhanced = clahe.apply(gray)
-            
-            # 应用双边滤波减少噪声但保持边缘
-            filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
-            
-            # 锐化
-            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
-            sharpened = cv2.filter2D(filtered, -1, kernel)
-            
-            # 转换回RGB
-            result = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2RGB)
-            
-            performance_logger.debug("高对比度处理完成")
-            return result
-            
-        except Exception as e:
-            performance_logger.error(f"高对比度处理失败: {e}")
-            return img_array
-    
-    def _color_separation_processing(self, img_array: np.ndarray) -> np.ndarray:
-        """颜色分离处理 - 专门提取白色文字"""
-        try:
-            # 转换为HSV
-            hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
-            
-            # 定义白色的HSV范围
-            lower_white = np.array([0, 0, 200])     # 高亮度，低饱和度
-            upper_white = np.array([180, 30, 255])  # 任何色调，低饱和度，高亮度
-            
-            # 创建白色文字掩码
-            white_mask = cv2.inRange(hsv, lower_white, upper_white)
-            
-            # 形态学操作清理掩码
-            kernel = np.ones((2,2), np.uint8)
-            white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
-            
-            # 创建二值图像：白色文字为白色，其他为黑色
-            result = np.zeros_like(img_array)
-            result[white_mask > 0] = [255, 255, 255]
-            
-            performance_logger.debug("颜色分离处理完成")
-            return result
-            
-        except Exception as e:
-            performance_logger.error(f"颜色分离处理失败: {e}")
             return img_array
     
     def _is_target_window_active(self) -> bool:
@@ -380,66 +233,46 @@ class EnhancedOCRManager(QThread):
             performance_logger.error(f"截取窗口截图失败: {e}")
             return None
     
-    def _perform_ocr_parallel(self, image: Image.Image) -> Dict[str, Any]:
-        """并行执行多引擎OCR识别 - 根据配置决定使用的引擎"""
+    def _perform_ocr(self, image: Image.Image) -> Dict[str, Any]:
+        """执行OCR识别 - 只使用EasyOCR和橙色背景优化"""
         results = {
-            'individual_results': [],  # 每个OCR结果单独存储
-            'processing_summary': {}   # 处理摘要
+            'individual_results': [],
+            'processing_summary': {}
         }
         
         try:
-            # 并行获取多种预处理版本
-            processed_versions = self._preprocess_image_parallel(image)
+            # 转换为RGB模式的原始图片
+            if image.mode == 'RGBA':
+                background = Image.new('RGB', image.size, (255, 255, 255))
+                background.paste(image, mask=image.split()[-1])
+                original_image = background
+            elif image.mode != 'RGB':
+                original_image = image.convert('RGB')
+            else:
+                original_image = image.copy()
             
-            all_individual_results = []
+            # 转换为numpy数组并进行橙色背景优化处理
+            original_array = np.array(original_image)
+            processed_image = self._process_orange_background_text(original_array.copy())
             
-            # 获取OCR引擎配置
-            ocr_engines_config = self._config.get('ocr_engines', {})
-            enable_easyocr = ocr_engines_config.get('easyocr', True)
-            enable_tesseract = ocr_engines_config.get('tesseract', False)
+            # 使用EasyOCR进行识别
+            ocr_results = self._run_easyocr(processed_image)
             
-            # 对每种预处理版本并行进行OCR
-            max_workers = len(processed_versions) * (int(enable_easyocr) + int(enable_tesseract and self._tesseract_available))
-            with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
-                future_to_task = {}
-                
-                for version_name, processed_image in processed_versions:
-                    # EasyOCR任务
-                    if enable_easyocr:
-                        future_easy = executor.submit(self._run_easyocr, processed_image, version_name)
-                        future_to_task[future_easy] = f'easyocr_{version_name}'
-                    
-                    # Tesseract任务（如果可用且启用）
-                    if enable_tesseract and self._tesseract_available:
-                        future_tess = executor.submit(self._run_tesseract, processed_image, version_name)
-                        future_to_task[future_tess] = f'tesseract_{version_name}'
-                
-                # 收集所有OCR结果
-                for future in as_completed(future_to_task):
-                    task_name = future_to_task[future]
-                    try:
-                        ocr_result = future.result()
-                        if ocr_result:
-                            all_individual_results.extend(ocr_result)
-                            performance_logger.debug(f"OCR任务完成: {task_name}, 获得 {len(ocr_result)} 个文本")
-                    except Exception as e:
-                        performance_logger.error(f"OCR任务 {task_name} 失败: {e}")
-            
-            results['individual_results'] = all_individual_results
+            results['individual_results'] = ocr_results
             results['processing_summary'] = {
-                'total_texts': len(all_individual_results),
-                'preprocessing_methods': len(processed_versions),
-                'ocr_engines': int(enable_easyocr) + int(enable_tesseract and self._tesseract_available)
+                'total_texts': len(ocr_results),
+                'preprocessing_methods': 1,  # 只有orange_optimized
+                'ocr_engines': 1             # 只有EasyOCR
             }
             
-            performance_logger.info(f"OCR识别完成，共获得 {len(all_individual_results)} 个文本结果")
+            performance_logger.info(f"OCR识别完成，共获得 {len(ocr_results)} 个文本结果")
             
         except Exception as e:
             performance_logger.error(f"OCR识别失败: {e}")
         
         return results
     
-    def _run_easyocr(self, processed_image: np.ndarray, version_name: str) -> List[Dict]:
+    def _run_easyocr(self, processed_image: np.ndarray) -> List[Dict]:
         """运行EasyOCR识别"""
         try:
             easyocr_results = self._easyocr_reader.readtext(processed_image)
@@ -453,9 +286,9 @@ class EnhancedOCRManager(QThread):
                         'text': text_stripped,
                         'bbox': bbox,
                         'confidence': confidence,
-                        'source': f'easyocr_{version_name}',
+                        'source': 'easyocr_orange_optimized',
                         'engine': 'easyocr',
-                        'version': version_name,
+                        'version': 'orange_optimized',
                         'timestamp': time.time()
                     }
                     text_boxes.append(text_box)
@@ -463,54 +296,16 @@ class EnhancedOCRManager(QThread):
             return text_boxes
             
         except Exception as e:
-            performance_logger.error(f"EasyOCR识别失败 ({version_name}): {e}")
+            performance_logger.error(f"EasyOCR识别失败: {e}")
             return []
     
-    def _run_tesseract(self, processed_image: np.ndarray, version_name: str) -> List[Dict]:
-        """运行Tesseract识别"""
-        try:
-            import pytesseract
-            
-            # 转换为PIL图像
-            pil_image = Image.fromarray(processed_image.astype('uint8'))
-            
-            # 配置Tesseract参数
-            config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789LVlv.:'
-            
-            # 获取详细识别结果
-            data = pytesseract.image_to_data(pil_image, config=config, output_type=pytesseract.Output.DICT)
-            
-            text_boxes = []
-            for i, text in enumerate(data['text']):
-                confidence = int(data['conf'][i])
-                if confidence > 30 and text.strip():  # Tesseract的置信度范围是0-100
-                    x, y, w, h = data['left'][i], data['top'][i], data['width'][i], data['height'][i]
-                    bbox = [[x, y], [x+w, y], [x+w, y+h], [x, y+h]]
-                    
-                    text_box = {
-                        'text': text.strip(),
-                        'bbox': bbox,
-                        'confidence': confidence / 100.0,  # 转换为0-1范围
-                        'source': f'tesseract_{version_name}',
-                        'engine': 'tesseract',
-                        'version': version_name,
-                        'timestamp': time.time()
-                    }
-                    text_boxes.append(text_box)
-            
-            return text_boxes
-            
-        except Exception as e:
-            performance_logger.error(f"Tesseract识别失败 ({version_name}): {e}")
-            return []
-    
-    def _extract_game_data_individual(self, ocr_results: Dict[str, Any]) -> Dict[str, Any]:
-        """从OCR结果中提取游戏数据 - 移除历史数据依赖"""
+    def _extract_game_data(self, ocr_results: Dict[str, Any]) -> Dict[str, Any]:
+        """从OCR结果中提取游戏数据"""
         game_data = {
             'level': None,
             'experience': None,
-            'candidate_results': [],  # 所有候选结果
-            'selected_result': None,  # 最终选择的结果
+            'candidate_results': [],
+            'selected_result': None,
             'extraction_details': {},
             'confidence_analysis': {}
         }
@@ -519,7 +314,7 @@ class EnhancedOCRManager(QThread):
             individual_results = ocr_results.get('individual_results', [])
             performance_logger.info(f"开始数据提取，共 {len(individual_results)} 个OCR结果")
             
-            # 步骤1: 从每个OCR结果中单独提取数据
+            # 从每个OCR结果中提取数据
             candidates = []
             for i, text_box in enumerate(individual_results):
                 candidate = self._extract_single_result(text_box, i)
@@ -529,11 +324,11 @@ class EnhancedOCRManager(QThread):
             game_data['candidate_results'] = candidates
             performance_logger.info(f"提取到 {len(candidates)} 个候选结果")
             
-            # 步骤2: 分析每个候选结果的合理性
+            # 分析每个候选结果的合理性
             for candidate in candidates:
                 self._analyze_candidate_reasonableness(candidate)
             
-            # 步骤3: 选择最佳结果（不依赖历史数据）
+            # 选择最佳结果
             combined_result = self._select_best_candidate(candidates)
             
             if combined_result:
@@ -551,10 +346,6 @@ class EnhancedOCRManager(QThread):
                 }
                 
                 performance_logger.info(f"最终选择结果: Level={game_data['level']}, Exp={game_data['experience']}")
-                level_info = f"等级来源: {selection_details.get('level_source', 'None')}, 评分: {selection_details.get('level_score', 0):.1f}"
-                exp_info = f"经验来源: {selection_details.get('experience_source', 'None')}, 评分: {selection_details.get('experience_score', 0):.1f}"
-                performance_logger.info(f"{level_info}")
-                performance_logger.info(f"{exp_info}")
             else:
                 performance_logger.warning("没有找到合适的候选结果")
             
@@ -597,7 +388,7 @@ class EnhancedOCRManager(QThread):
                 candidate['details']['experience_source'] = f"single_text_{text_box.get('source', 'unknown')}"
             
             # 如果是橙色背景优化的结果，尝试数字组合
-            if 'orange_optimized' in text_box.get('source', '') or 'color_separated' in text_box.get('source', ''):
+            if 'orange_optimized' in text_box.get('source', ''):
                 if text.isdigit() and candidate['level'] is None:
                     num = int(text)
                     if 1 <= num <= 300:
@@ -657,7 +448,7 @@ class EnhancedOCRManager(QThread):
         return None
     
     def _analyze_candidate_reasonableness(self, candidate: Dict[str, Any]):
-        """分析候选结果的合理性 - 移除历史数据依赖"""
+        """分析候选结果的合理性"""
         score = 0
         
         # 基础置信度评分 (0-40分)
@@ -685,29 +476,18 @@ class EnhancedOCRManager(QThread):
         
         # 来源可靠性评分 (0-20分)
         source = candidate.get('source', '')
-        engine = candidate.get('engine', '')
         
-        # EasyOCR通常更可靠
-        if 'easyocr' in engine:
-            score += 10
-        elif 'tesseract' in engine:
-            score += 8
-        
-        # 橙色背景优化的结果更可靠（针对我们的场景）
+        # 橙色背景优化的结果更可靠
         if 'orange_optimized' in source:
-            score += 10
-        elif 'color_separated' in source:
-            score += 8
-        elif 'high_contrast' in source:
-            score += 6
+            score += 20
         else:
-            score += 4
+            score += 10
         
         candidate['reasonableness_score'] = score
         performance_logger.debug(f"候选结果评分: {score}, 文本: '{candidate['text']}', 来源: {source}")
     
     def _select_best_candidate(self, candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """选择最佳候选结果 - 不依赖历史数据"""
+        """选择最佳候选结果"""
         if not candidates:
             return None
         
@@ -718,19 +498,6 @@ class EnhancedOCRManager(QThread):
         # 按合理性评分排序
         level_candidates.sort(key=lambda x: x['reasonableness_score'], reverse=True)
         experience_candidates.sort(key=lambda x: x['reasonableness_score'], reverse=True)
-        
-        # 记录评分前几名
-        performance_logger.info("=== 等级候选结果排名 ===")
-        for i, candidate in enumerate(level_candidates[:3]):
-            performance_logger.info(f"等级Top {i+1}: 评分={candidate['reasonableness_score']:.1f}, "
-                                  f"Level={candidate.get('level')}, "
-                                  f"来源={candidate.get('source')}")
-        
-        performance_logger.info("=== 经验值候选结果排名 ===")
-        for i, candidate in enumerate(experience_candidates[:3]):
-            performance_logger.info(f"经验Top {i+1}: 评分={candidate['reasonableness_score']:.1f}, "
-                                  f"Exp={candidate.get('experience')}, "
-                                  f"来源={candidate.get('source')}")
         
         # 选择最佳等级和经验值候选
         best_level_candidate = level_candidates[0] if level_candidates else None
@@ -750,19 +517,9 @@ class EnhancedOCRManager(QThread):
             }
         }
         
-        # 额外的质量检查
-        level = combined_result.get('level')
-        experience = combined_result.get('experience')
-        
-        if level is not None and best_level_candidate.get('reasonableness_score', 0) < 50:
-            performance_logger.warning(f"等级候选评分较低: {best_level_candidate.get('reasonableness_score'):.1f}")
-        
-        if experience is not None and best_exp_candidate.get('reasonableness_score', 0) < 50:
-            performance_logger.warning(f"经验值候选评分较低: {best_exp_candidate.get('reasonableness_score'):.1f}")
-        
         performance_logger.info(f"=== 最终选择结果 ===")
-        performance_logger.info(f"等级: {level} (来源: {combined_result['selection_details']['level_source']}, 评分: {combined_result['selection_details']['level_score']:.1f})")
-        performance_logger.info(f"经验: {experience} (来源: {combined_result['selection_details']['experience_source']}, 评分: {combined_result['selection_details']['experience_score']:.1f})")
+        performance_logger.info(f"等级: {combined_result.get('level')} (评分: {combined_result['selection_details']['level_score']:.1f})")
+        performance_logger.info(f"经验: {combined_result.get('experience')} (评分: {combined_result['selection_details']['experience_score']:.1f})")
         
         return combined_result
     
@@ -853,8 +610,8 @@ class EnhancedOCRManager(QThread):
         
         return []
     
-    def _create_easyocr_visualization(self, image: Image.Image, ocr_results: Dict[str, Any], timestamp: str) -> str:
-        """创建多引擎并行OCR可视化"""
+    def _create_ocr_visualization(self, image: Image.Image, ocr_results: Dict[str, Any], timestamp: str) -> str:
+        """创建OCR可视化"""
         try:
             from PIL import ImageDraw, ImageFont
             
@@ -866,27 +623,12 @@ class EnhancedOCRManager(QThread):
             try:
                 font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
                 small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
-                tiny_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 10)
             except:
                 font = ImageFont.load_default()
                 small_font = ImageFont.load_default()
-                tiny_font = ImageFont.load_default()
             
-            # 定义不同引擎和处理版本的颜色
-            colors = {
-                'easyocr_standard': 'red',
-                'easyocr_orange_optimized': 'orange',
-                'easyocr_high_contrast': 'blue',
-                'easyocr_color_separated': 'green',
-                'tesseract_standard': 'purple',
-                'tesseract_orange_optimized': 'magenta',
-                'tesseract_high_contrast': 'cyan',
-                'tesseract_color_separated': 'yellow'
-            }
-            
-            # 绘制所有识别结果
+            # 绘制识别结果
             individual_results = ocr_results.get('individual_results', [])
-            candidate_results = ocr_results.get('candidate_results', [])
             selected_result = ocr_results.get('selected_result')
             
             # 绘制所有文本框
@@ -894,86 +636,48 @@ class EnhancedOCRManager(QThread):
                 bbox = box['bbox']
                 text = box['text']
                 confidence = box['confidence']
-                source = box.get('source', 'unknown')
-                
-                # 选择颜色
-                color = colors.get(source, 'gray')
                 
                 # 检查是否是选中的结果
                 is_selected = False
                 if selected_result:
-                    selected_text = selected_result.get('text', '')
-                    selected_source = selected_result.get('source', '')
-                    if text == selected_text and source == selected_source:
+                    selected_level_candidate = selected_result.get('level_candidate')
+                    selected_exp_candidate = selected_result.get('experience_candidate')
+                    
+                    if ((selected_level_candidate and selected_level_candidate.get('text') == text) or
+                        (selected_exp_candidate and selected_exp_candidate.get('text') == text)):
                         is_selected = True
-                        color = 'lime'  # 选中结果用亮绿色
+                
+                # 选择颜色
+                color = 'lime' if is_selected else 'orange'
+                line_width = 3 if is_selected else 2
                 
                 # 绘制边框
                 try:
-                    line_width = 3 if is_selected else 2
-                    
-                    if isinstance(bbox[0], list):  # EasyOCR格式: [[x1,y1], [x2,y2], ...]
+                    if isinstance(bbox[0], list):  # EasyOCR格式
                         points = [(point[0], point[1]) for point in bbox]
                         draw.polygon(points, outline=color, width=line_width)
                         x1, y1 = points[0]
-                    else:  # Tesseract格式: [x1, y1, x2, y2]
+                    else:
                         x1, y1, x2, y2 = bbox
                         draw.rectangle([x1, y1, x2, y2], outline=color, width=line_width)
                     
-                    # 在文本框上方绘制标签
-                    engine = box.get('engine', 'unknown')
-                    version = box.get('version', 'unknown')
-                    label = f"{text} ({confidence:.2f}) [{engine}_{version}]"
-                    
+                    # 绘制标签
+                    label = f"{text} ({confidence:.2f})"
                     if is_selected:
-                        label = f"✅ {label} [SELECTED]"
+                        label = f"✅ {label}"
                     
-                    # 计算标签背景
-                    y_offset = -35 if is_selected else -25
-                    font_to_use = small_font if is_selected else tiny_font
-                    
-                    bbox_label = draw.textbbox((x1, y1 + y_offset), label, font=font_to_use)
+                    y_offset = -25
+                    bbox_label = draw.textbbox((x1, y1 + y_offset), label, font=small_font)
                     draw.rectangle(bbox_label, fill='white', outline=color)
-                    draw.text((x1, y1 + y_offset + 2), label, fill=color, font=font_to_use)
+                    draw.text((x1, y1 + y_offset), label, fill=color, font=small_font)
                     
                 except Exception as e:
                     performance_logger.warning(f"绘制文本框 {i} 失败: {e}")
                     continue
             
             # 在图像顶部添加汇总信息
-            summary_text = f"并行OCR识别结果 (时间: {timestamp})"
+            summary_text = f"EasyOCR + 橙色背景优化识别结果 (时间: {timestamp})"
             draw.text((10, 10), summary_text, fill='black', font=font)
-            
-            # 添加处理摘要
-            processing_summary = ocr_results.get('processing_summary', {})
-            if processing_summary:
-                summary_info = (f"总文本: {processing_summary.get('total_texts', 0)}, "
-                              f"预处理方法: {processing_summary.get('preprocessing_methods', 0)}, "
-                              f"OCR引擎: {processing_summary.get('ocr_engines', 0)}")
-                draw.text((10, 35), summary_info, fill='darkblue', font=small_font)
-            
-            # 添加候选结果信息
-            if candidate_results:
-                candidate_info = f"候选结果: {len(candidate_results)} 个"
-                draw.text((10, 55), candidate_info, fill='purple', font=small_font)
-                
-                # 显示前3个候选的评分
-                top_candidates = sorted(candidate_results, key=lambda x: x.get('reasonableness_score', 0), reverse=True)[:3]
-                for i, candidate in enumerate(top_candidates):
-                    score = candidate.get('reasonableness_score', 0)
-                    level = candidate.get('level')
-                    exp = candidate.get('experience')
-                    source = candidate.get('source', 'unknown')
-                    
-                    result_text = f"#{i+1} 评分:{score:.1f}"
-                    if level is not None:
-                        result_text += f" LV:{level}"
-                    if exp is not None:
-                        result_text += f" EXP:{exp.get('value', 0)}"
-                    result_text += f" [{source}]"
-                    
-                    color = 'darkgreen' if i == 0 else 'orange' if i == 1 else 'brown'
-                    draw.text((10, 75 + i * 15), result_text, fill=color, font=tiny_font)
             
             # 添加最终提取结果
             if selected_result:
@@ -990,16 +694,16 @@ class EnhancedOCRManager(QThread):
             # 保存可视化图像
             viz_path = os.path.join(
                 self._output_folder, 'annotated_images',
-                f"parallel_ocr_viz_{timestamp}.png"
+                f"ocr_viz_{timestamp}.png"
             )
             
             viz_image.save(viz_path)
             
-            performance_logger.info(f"并行OCR可视化已保存: {viz_path}")
+            performance_logger.info(f"OCR可视化已保存: {viz_path}")
             return viz_path
             
         except Exception as e:
-            performance_logger.error(f"创建并行OCR可视化失败: {e}")
+            performance_logger.error(f"创建OCR可视化失败: {e}")
             return ""
     
     def run(self):
@@ -1008,7 +712,7 @@ class EnhancedOCRManager(QThread):
         pass
     
     def trigger_ocr(self):
-        """触发单次OCR识别 - 新的工作流程"""
+        """触发单次OCR识别"""
         # 更新配置
         self._config = config_manager.get('screenshot_ocr', {})
         
@@ -1022,7 +726,7 @@ class EnhancedOCRManager(QThread):
         if not self._ocr_engine_loaded:
             self._load_ocr_engines()
             if not self._ocr_engine_loaded:
-                self.error_occurred.emit("OCR引擎加载失败，请检查依赖包安装")
+                self.error_occurred.emit("EasyOCR引擎加载失败，请检查依赖包安装")
                 return
         
         # 发送触发信号
@@ -1064,10 +768,10 @@ class EnhancedOCRManager(QThread):
                 performance_logger.info(f"截图已保存: {screenshot_path}")
             
             # 4. 进行OCR识别
-            ocr_results = self._perform_ocr_parallel(screenshot)
+            ocr_results = self._perform_ocr(screenshot)
             
             # 5. 提取游戏数据
-            game_data = self._extract_game_data_individual(ocr_results)
+            game_data = self._extract_game_data(ocr_results)
             game_data['timestamp'] = timestamp
             game_data['screenshot_path'] = screenshot_path
             
@@ -1089,10 +793,10 @@ class EnhancedOCRManager(QThread):
                 'selected_result': game_data.get('selected_result', None)
             }
             
-            easyocr_viz_path = self._create_easyocr_visualization(
+            viz_path = self._create_ocr_visualization(
                 screenshot, complete_results, timestamp
             )
-            game_data['visualization_path'] = easyocr_viz_path
+            game_data['visualization_path'] = viz_path
             
             # 保存OCR结果
             ocr_result_path = self._save_ocr_result(game_data, timestamp)
