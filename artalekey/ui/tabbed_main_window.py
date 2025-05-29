@@ -4,6 +4,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QResizeEvent
+import os
+import json
 
 from artalekey.ui.components import HotkeyCard, OCRHotkeyCard
 from artalekey.ui.simple_target_selector import SimpleTargetSelector
@@ -189,19 +191,29 @@ class TabbedMainWindow(QMainWindow):
         data_group = QGroupBox("数据管理")
         data_layout = QVBoxLayout(data_group)
         
-        # 数据清理按钮
-        cleanup_layout = QHBoxLayout()
+        # 第一行按钮：数据操作
+        data_operation_layout = QHBoxLayout()
         
         self.cleanup_old_data_btn = QPushButton("清理30天前数据")
         self.cleanup_old_data_btn.clicked.connect(self._cleanup_old_data)
-        cleanup_layout.addWidget(self.cleanup_old_data_btn)
+        data_operation_layout.addWidget(self.cleanup_old_data_btn)
         
         self.export_data_btn = QPushButton("导出数据")
         self.export_data_btn.clicked.connect(self._export_data)
-        cleanup_layout.addWidget(self.export_data_btn)
+        data_operation_layout.addWidget(self.export_data_btn)
         
-        cleanup_layout.addStretch()
-        data_layout.addLayout(cleanup_layout)
+        data_operation_layout.addStretch()
+        data_layout.addLayout(data_operation_layout)
+        
+        # 第二行按钮：文件夹操作
+        folder_operation_layout = QHBoxLayout()
+        
+        self.open_data_dir_btn = QPushButton("打开数据目录")
+        self.open_data_dir_btn.clicked.connect(self._open_data_directory)
+        folder_operation_layout.addWidget(self.open_data_dir_btn)
+        
+        folder_operation_layout.addStretch()
+        data_layout.addLayout(folder_operation_layout)
         
         layout.addWidget(data_group)
         
@@ -225,13 +237,13 @@ class TabbedMainWindow(QMainWindow):
         """导出数据到JSON文件"""
         try:
             from datetime import datetime
-            from artalekey.core.database import _get_app_data_dir
+            from artalekey.core.database import get_app_data_dir, game_db
             
             # 获取所有数据
             data = game_db.get_data_history(1000)  # 最多导出1000条
             
             # 使用应用数据目录而不是当前工作目录
-            export_path = os.path.join(_get_app_data_dir(), f'export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+            export_path = os.path.join(get_app_data_dir(), f'export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
             os.makedirs(os.path.dirname(export_path), exist_ok=True)
             
             with open(export_path, 'w', encoding='utf-8') as f:
@@ -241,6 +253,36 @@ class TabbedMainWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.warning(self, "错误", f"数据导出失败: {e}")
+    
+    def _open_data_directory(self):
+        """打开数据目录"""
+        try:
+            import platform
+            import subprocess
+            from artalekey.core.database import get_app_data_dir
+            
+            data_dir = get_app_data_dir()
+            
+            # 确保目录存在
+            os.makedirs(data_dir, exist_ok=True)
+            
+            system = platform.system()
+            
+            if system == "Darwin":  # macOS
+                subprocess.run(["open", data_dir], check=True)
+            elif system == "Windows":
+                # Windows 使用 explorer
+                subprocess.run(["explorer", data_dir], check=True)
+            else:  # Linux 和其他系统
+                # 尝试使用 xdg-open
+                subprocess.run(["xdg-open", data_dir], check=True)
+            
+            self.statusBar().showMessage(f"已打开数据目录: {data_dir}")
+            
+        except subprocess.CalledProcessError as e:
+            QMessageBox.warning(self, "错误", f"无法打开数据目录: {e}")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"打开数据目录失败: {e}")
         
     def load_config(self):
         """加载配置"""
@@ -317,6 +359,7 @@ class TabbedMainWindow(QMainWindow):
         
         # 目标应用选择器信号
         self.target_selector.window_filter_enabled.connect(self.on_window_filter_enabled)
+        self.target_selector.target_app_changed.connect(self.on_target_app_changed)
         
         # 窗口监控信号
         window_monitor.target_window_activated.connect(self.on_target_window_activated)
@@ -342,14 +385,30 @@ class TabbedMainWindow(QMainWindow):
         # 应用UI配置
         self.global_switch.setChecked(self._ui_config.get('global_enabled', False))
         
-        # 应用OCR配置
+        # 应用OCR配置 - 首次启动时默认启用
         ocr_config = config_manager.get('screenshot_ocr', {})
+        # 如果配置为空，设置默认启用状态
+        if not ocr_config:
+            ocr_config = {
+                'enabled': True,  # 默认启用OCR功能
+                'trigger_key': 'c',
+                'target_window': 'MapleStory Worlds',
+                'save_screenshots': False,
+                'capture_window_only': True,
+                'output_folder': 'ocr_data'
+            }
         self.ocr_card.set_config(ocr_config)
         
-        # 应用窗口过滤配置
+        # 应用窗口过滤配置 - 修改：默认启用
         window_filter_config = config_manager.get('window_filter', {})
-        self.target_selector.set_filter_enabled(window_filter_config.get('enabled', False))
-        target_app = window_filter_config.get('target_app', '')
+        # 如果配置为空，设置默认启用状态
+        if not window_filter_config:
+            window_filter_config = {
+                'enabled': True,  # 默认启用窗口过滤
+                'target_app': 'MapleStory Worlds'
+            }
+        self.target_selector.set_filter_enabled(window_filter_config.get('enabled', True))  # 默认启用
+        target_app = window_filter_config.get('target_app', 'MapleStory Worlds')
         if target_app:
             self.target_selector.set_target_app(target_app)
         
@@ -357,19 +416,26 @@ class TabbedMainWindow(QMainWindow):
         self.hotkey_listener.set_hold_time(hotkey_config['hold_time'])
         self.key_simulator.set_interval(hotkey_config['interval'])
         
-        # 设置OCR快捷键和目标窗口
+        # 设置OCR快捷键，使用统一的目标窗口配置
         ocr_config = self.ocr_card.get_config()
         self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 'c'))
-        self.hotkey_listener.set_target_window_name(ocr_config.get('target_window', 'MapleStory Worlds'))
+        # 修改：使用统一的窗口过滤配置而不是OCR独立配置
+        self.hotkey_listener.set_target_window_name(target_app)
         
         # 更新OCR状态显示
-        self._update_ocr_status(ocr_config)
+        self._update_ocr_status(ocr_config, target_app)
         
-    def _update_ocr_status(self, ocr_config):
+        # 如果是首次启动，立即保存默认配置
+        if not config_manager.get('screenshot_ocr', {}) or not config_manager.get('window_filter', {}):
+            self.save_config()  # 保存默认配置，确保下次启动能记住状态
+        
+    def _update_ocr_status(self, ocr_config, target_window):
         """更新OCR状态显示"""
-        if ocr_config.get('enabled', False):
+        # 修改：如果配置为空或没有enabled字段，默认认为是启用状态
+        enabled = ocr_config.get('enabled', True) if ocr_config else True
+        
+        if enabled:
             trigger_key = ocr_config.get('trigger_key', 'c')
-            target_window = ocr_config.get('target_window', 'MapleStory Worlds')
             self.ocr_status_label.setText(f"✅ OCR功能已启用 (按 {trigger_key.upper()} 键触发，目标: {target_window})")
             self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid green; border-radius: 4px;")
         else:
@@ -436,6 +502,9 @@ class TabbedMainWindow(QMainWindow):
             target_app = self.target_selector.get_target_app()
             window_monitor.set_target_processes([target_app])
             window_monitor.start()
+            
+            # 同步更新热键监听器的目标窗口
+            self.hotkey_listener.set_target_window_name(target_app)
         else:
             window_monitor.stop()
             
@@ -457,7 +526,7 @@ class TabbedMainWindow(QMainWindow):
         self.hotkey_listener.set_target_window_name(config.get('target_window', 'MapleStory Worlds'))
         
         # 更新OCR状态显示
-        self._update_ocr_status(config)
+        self._update_ocr_status(config, config.get('target_window', 'MapleStory Worlds'))
         
         # 保存配置
         self.save_config()
@@ -532,6 +601,15 @@ class TabbedMainWindow(QMainWindow):
     def on_activate_window_requested(self):
         """激活窗口请求"""
         self.statusBar().showMessage("正在尝试激活MapleStory Worlds窗口...")
+        
+    def on_target_app_changed(self, target_app):
+        """目标应用变更"""
+        # 同步更新热键监听器的目标窗口
+        if target_app:
+            self.hotkey_listener.set_target_window_name(target_app)
+        
+        # 保存配置
+        self.save_config()
         
     def closeEvent(self, event):
         """关闭事件"""

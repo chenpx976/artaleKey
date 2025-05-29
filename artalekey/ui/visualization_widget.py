@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.dates as mdates
+from matplotlib.ticker import MaxNLocator
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
 import numpy as np
@@ -28,14 +29,18 @@ class VisualizationWidget(QWidget):
         self.beijing_tz = pytz.timezone('Asia/Shanghai')
         self._setup_matplotlib()
         self.init_ui()
-        self.setup_auto_refresh()
+        # 移除自动定时刷新，改为事件驱动
+        # self.setup_auto_refresh()
         # 延迟刷新，让界面先显示
-        QTimer.singleShot(1000, self.refresh_data)  # 1秒后刷新一次
+        QTimer.singleShot(2000, self.refresh_data)  # 2秒后刷新一次
     
     def _setup_matplotlib(self):
         """设置matplotlib中文字体"""
         plt.rcParams['font.sans-serif'] = ['Arial Unicode MS', 'SimHei', 'DejaVu Sans']
         plt.rcParams['axes.unicode_minus'] = False
+        # 限制最大tick数量，避免性能问题
+        plt.rcParams['axes.formatter.limits'] = [-5, 6]
+        plt.rcParams['figure.max_open_warning'] = 0  # 禁用最大打开图形警告
     
     def _convert_to_beijing_time(self, time_str: str) -> datetime:
         """将数据库时间字符串转换为北京时间"""
@@ -179,11 +184,6 @@ class VisualizationWidget(QWidget):
         layout.addWidget(self.stats_status_label)
         
         return group
-    
-    def setup_auto_refresh(self):
-        """设置自动刷新 - 移除定时刷新，只在特定事件时刷新"""
-        # 移除定时刷新，改为事件驱动刷新
-        pass
     
     def get_time_range_hours(self) -> int:
         """获取选择的时间范围（小时）"""
@@ -336,19 +336,72 @@ class VisualizationWidget(QWidget):
                 end_time = max(times)
                 time_span = end_time - start_time
                 
-                # 添加少量边距（5%的时间跨度）
-                margin = time_span * 0.05
-                ax.set_xlim(start_time - margin, end_time + margin)
+                # 检查时间跨度，避免生成过多tick
+                total_seconds = time_span.total_seconds()
                 
-                # 根据时间跨度设置格式
-                if hours_limit <= 6:
+                # 当只有很少数据点或时间跨度很小时，使用固定刻度
+                if len(times) <= 3 or total_seconds < 300:  # 少于3个数据点或5分钟
+                    # 使用手动设置刻度，避免matplotlib自动生成过多tick
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
-                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=1))
-                    ax.xaxis.set_minor_locator(mdates.MinuteLocator(interval=30))
+                    # 只显示数据点对应的时间
+                    ax.set_xticks(times)
+                    # 禁用小刻度
+                    ax.xaxis.set_minor_locator(plt.NullLocator())
+                    # 强制限制最大tick数量
+                    ax.xaxis.set_major_locator(MaxNLocator(nbins=min(5, len(times)), prune='both'))
+                    # 设置合理的x轴范围
+                    if total_seconds > 0:
+                        margin = max(timedelta(minutes=10), time_span * 0.2)
+                    else:
+                        margin = timedelta(minutes=30)
+                    ax.set_xlim(start_time - margin, end_time + margin)
+                elif total_seconds < 60:  # 少于1分钟的跨度
+                    # 只显示几个点，不设置复杂的时间格式
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M:%S'))
+                    # 限制最多5个主要刻度
+                    ax.xaxis.set_major_locator(mdates.SecondLocator(interval=max(1, int(total_seconds / 5))))
+                    # 禁用小刻度
+                    ax.xaxis.set_minor_locator(plt.NullLocator())
+                    # 强制限制最大tick数量
+                    ax.xaxis.set_major_locator(MaxNLocator(nbins=5, prune='both'))
+                elif total_seconds < 3600:  # 少于1小时的跨度
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                    # 根据分钟数设置合理的间隔
+                    interval_minutes = max(1, int(total_seconds / 300))  # 最多5个刻度
+                    ax.xaxis.set_major_locator(mdates.MinuteLocator(interval=interval_minutes))
+                    # 禁用小刻度
+                    ax.xaxis.set_minor_locator(plt.NullLocator())
+                    # 强制限制最大tick数量
+                    ax.xaxis.set_major_locator(MaxNLocator(nbins=6, prune='both'))
+                elif hours_limit <= 6:
+                    ax.xaxis.set_major_formatter(mdates.DateFormatter('%H:%M'))
+                    # 限制小时刻度的数量
+                    interval_hours = max(1, int(total_seconds / 3600 / 6))  # 最多6个刻度
+                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=interval_hours))
+                    # 禁用小刻度
+                    ax.xaxis.set_minor_locator(plt.NullLocator())
+                    # 强制限制最大tick数量
+                    ax.xaxis.set_major_locator(MaxNLocator(nbins=6, prune='both'))
                 else:
                     ax.xaxis.set_major_formatter(mdates.DateFormatter('%m-%d %H:%M'))
-                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=4))
-                    ax.xaxis.set_minor_locator(mdates.HourLocator(interval=1))
+                    # 限制刻度数量
+                    interval_hours = max(1, int(total_seconds / 3600 / 8))  # 最多8个刻度
+                    ax.xaxis.set_major_locator(mdates.HourLocator(interval=interval_hours))
+                    # 禁用小刻度
+                    ax.xaxis.set_minor_locator(plt.NullLocator())
+                    # 强制限制最大tick数量
+                    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, prune='both'))
+                
+                # 为其他情况设置x轴范围
+                if len(times) > 3 and total_seconds >= 300:
+                    # 添加少量边距（5%的时间跨度）
+                    if total_seconds > 0:
+                        margin = time_span * 0.05
+                        ax.set_xlim(start_time - margin, end_time + margin)
+                    else:
+                        # 如果只有一个数据点，设置固定的边距
+                        margin = timedelta(minutes=30)
+                        ax.set_xlim(start_time - margin, start_time + margin)
             
             # 设置y轴格式，让数值更易读
             if exp_values:

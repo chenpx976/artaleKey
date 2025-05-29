@@ -6,21 +6,41 @@ from typing import Optional, List, Dict, Any
 import numpy as np
 from artalekey.core.logger import performance_logger
 import sys
+import platform
 
 def _get_app_data_dir():
-    """获取应用数据目录"""
-    # 如果是打包的应用程序
-    if hasattr(sys, '_MEIPASS'):
-        # PyInstaller打包后的临时目录
-        base_dir = os.path.dirname(sys.executable)
-        # 在应用程序同级目录创建数据文件夹
-        data_dir = os.path.join(os.path.dirname(base_dir), 'ocr_data')
-    else:
-        # 开发环境，使用模块相对路径
-        module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-        data_dir = os.path.join(module_dir, 'ocr_data')
+    """获取应用数据目录 - 使用系统标准的用户数据目录"""
+    app_name = "ArtaleKey"
+    
+    system = platform.system()
+    
+    if system == "Darwin":  # macOS
+        # ~/Library/Application Support/ArtaleKey/
+        home = os.path.expanduser("~")
+        data_dir = os.path.join(home, "Library", "Application Support", app_name)
+    elif system == "Windows":
+        # %APPDATA%\ArtaleKey\
+        appdata = os.environ.get("APPDATA")
+        if appdata:
+            data_dir = os.path.join(appdata, app_name)
+        else:
+            # 后备方案
+            home = os.path.expanduser("~")
+            data_dir = os.path.join(home, "AppData", "Roaming", app_name)
+    else:  # Linux 和其他 Unix 系统
+        # ~/.local/share/ArtaleKey/
+        xdg_data_home = os.environ.get("XDG_DATA_HOME")
+        if xdg_data_home:
+            data_dir = os.path.join(xdg_data_home, app_name)
+        else:
+            home = os.path.expanduser("~")
+            data_dir = os.path.join(home, ".local", "share", app_name)
     
     return data_dir
+
+def get_app_data_dir():
+    """公开的获取应用数据目录函数，供其他模块使用"""
+    return _get_app_data_dir()
 
 class GameDataDatabase:
     """游戏数据数据库管理器"""

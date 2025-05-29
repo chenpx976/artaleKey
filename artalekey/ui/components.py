@@ -174,9 +174,9 @@ class OCRHotkeyCard(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         
-        # OCR功能启用开关
+        # OCR功能启用开关 - 修改默认状态为启用
         self.enabled_check = QCheckBox("启用OCR功能")
-        self.enabled_check.setChecked(False)
+        self.enabled_check.setChecked(True)  # 修改：默认启用OCR功能
         layout.addWidget(self.enabled_check)
         
         # OCR触发键设置
@@ -199,19 +199,6 @@ class OCRHotkeyCard(QGroupBox):
         key_layout.addStretch()
         layout.addLayout(key_layout)
         
-        # 目标窗口设置
-        window_layout = QHBoxLayout()
-        window_label = QLabel("目标窗口:")
-        window_label.setMinimumWidth(120)
-        
-        self.window_input = QLineEdit()
-        self.window_input.setPlaceholderText("MapleStory Worlds")
-        self.window_input.setText("MapleStory Worlds")
-        
-        window_layout.addWidget(window_label)
-        window_layout.addWidget(self.window_input)
-        layout.addLayout(window_layout)
-        
         # 简化的高级选项 - 使用基础布局
         self.save_screenshots_check = QCheckBox("保存截图文件")
         self.save_screenshots_check.setChecked(True)
@@ -224,7 +211,6 @@ class OCRHotkeyCard(QGroupBox):
         # 连接信号 - 使用防抖机制
         self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
         self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
-        self.window_input.textChanged.connect(self._on_config_changed_debounced)
         self.save_screenshots_check.stateChanged.connect(self._on_config_changed_debounced)
         self.window_only_check.stateChanged.connect(self._on_config_changed_debounced)
 
@@ -258,7 +244,6 @@ class OCRHotkeyCard(QGroupBox):
         return {
             'enabled': self.enabled_check.isChecked(),
             'trigger_key': self.key_combo.currentText(),
-            'target_window': self.window_input.text() or 'MapleStory Worlds',
             'save_screenshots': self.save_screenshots_check.isChecked(),
             'capture_window_only': self.window_only_check.isChecked(),
             'output_folder': 'ocr_data'
@@ -268,7 +253,6 @@ class OCRHotkeyCard(QGroupBox):
         """设置OCR配置 - 避免触发信号"""
         self.enabled_check.blockSignals(True)
         self.key_combo.blockSignals(True)
-        self.window_input.blockSignals(True)
         self.save_screenshots_check.blockSignals(True)
         self.window_only_check.blockSignals(True)
         
@@ -287,16 +271,12 @@ class OCRHotkeyCard(QGroupBox):
                     self.key_combo.addItem(trigger_key)
                     self.key_combo.setCurrentText(trigger_key)
             
-            target_window = config.get('target_window', 'MapleStory Worlds')
-            self.window_input.setText(target_window)
-            
             self.save_screenshots_check.setChecked(config.get('save_screenshots', False))  # 默认不保存
             self.window_only_check.setChecked(config.get('capture_window_only', True))   # 默认只截取窗口
             
         finally:
             self.enabled_check.blockSignals(False)
             self.key_combo.blockSignals(False)
-            self.window_input.blockSignals(False)
             self.save_screenshots_check.blockSignals(False)
             self.window_only_check.blockSignals(False)
         

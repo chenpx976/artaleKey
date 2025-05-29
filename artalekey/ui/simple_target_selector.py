@@ -12,6 +12,7 @@ class SimpleTargetSelector(QGroupBox):
     
     # 信号
     window_filter_enabled = pyqtSignal(bool)  # 窗口过滤启用状态变化
+    target_app_changed = pyqtSignal(str)      # 目标应用变更信号
     
     def __init__(self, parent=None):
         super().__init__("窗口过滤", parent)
@@ -118,6 +119,9 @@ class SimpleTargetSelector(QGroupBox):
             window_monitor.set_target_processes([target_app.strip()])
             self.status_label.setText(f"窗口过滤已启用 - 目标应用: {target_app}")
             self.status_label.setStyleSheet("color: green; font-size: 12px;")
+        
+        # 发送目标应用变更信号
+        self.target_app_changed.emit(target_app.strip())
     
     def set_default_app(self):
         """设置默认应用"""

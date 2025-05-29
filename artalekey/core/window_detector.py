@@ -524,7 +524,7 @@ class ActiveWindowMonitor(QThread):
         self._target_processes = set()  # 目标进程名称集合
         self._current_window = None
         self._is_target_active = False
-        self._check_interval = 0.5  # 检查间隔（秒）
+        self._check_interval = 1.0  # 检查间隔（秒）- 从0.5增加到1.0
         self._lock = threading.RLock()
         
         # 新增：窗口历史记录

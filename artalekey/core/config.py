@@ -37,8 +37,8 @@ class ConfigManager(QObject):
                 'log_level': 'INFO'
             },
             'window_filter': {
-                'enabled': False,
-                'target_apps': []
+                'enabled': True,
+                'target_app': 'MapleStory Worlds'
             },
             'screenshot_ocr': {
                 'enabled': True,
