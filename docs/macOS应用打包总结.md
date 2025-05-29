@@ -182,4 +182,48 @@ create-dmg --volname "ArtaleKey" "ArtaleKey-1.0.0.dmg" "dist/"
 
 🎊 **ArtaleKey现在可以作为专业的macOS应用程序分发了！**
 
-用户只需双击即可享受您精心设计的简化UI和强大功能。 
+用户只需双击即可享受您精心设计的简化UI和强大功能。
+
+## 🔧 问题解决记录
+
+### matplotlib数据文件丢失问题
+**问题描述：** PyInstaller打包后运行时出现错误：
+```
+FileNotFoundError: [Errno 2] No such file or directory: '.../matplotlib/mpl-data/matplotlibrc'
+```
+
+**解决方案：**
+1. **识别问题** - matplotlib的配置文件没有被PyInstaller正确包含
+2. **修复打包配置** - 在`build_macos_app.py`中：
+   - 动态获取matplotlib数据目录：`matplotlib.get_data_path()`
+   - 添加数据文件映射：`(mpl_data_dir, 'matplotlib/mpl-data')`
+   - 添加隐式导入：`matplotlib.backends.backend_qt5agg`, `matplotlib.figure`等
+3. **移除文件过滤** - 删除了之前过滤matplotlib文件的代码
+4. **验证修复** - 重新打包后应用可以正常启动
+
+**关键配置：**
+```python
+# 在PyInstaller spec文件中
+datas=[
+    ('artalekey/core', 'artalekey/core'),
+    ('artalekey/ui', 'artalekey/ui'),
+    # 包含matplotlib数据文件
+    (mpl_data_dir, 'matplotlib/mpl-data'),
+],
+hiddenimports=[
+    # ... 其他导入
+    'matplotlib.backends.backend_qt5agg',
+    'matplotlib.figure',
+    'matplotlib.pyplot', 
+    'matplotlib.dates',
+    'numpy',
+],
+```
+
+**经验总结：**
+- PyInstaller默认不会打包非Python文件的数据文件
+- 对于包含配置文件的库（如matplotlib），需要手动指定数据文件路径
+- 使用动态路径获取比硬编码路径更可靠
+- 测试时要检查完整的功能，不仅仅是启动
+
+**状态：** ✅ 已解决 (2025-05-29) 

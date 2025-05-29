@@ -9,6 +9,7 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
+import matplotlib
 
 def check_dependencies():
     """检查打包依赖"""
@@ -29,13 +30,29 @@ def check_dependencies():
         print("❌ PyQt6 未安装")
         return False
         
+    try:
+        import matplotlib
+        print(f"✅ matplotlib {matplotlib.__version__}")
+    except ImportError:
+        print("❌ matplotlib 未安装")
+        return False
+        
     return True
 
 def create_spec_file():
     """创建PyInstaller规格文件"""
     print("📝 创建打包配置文件...")
     
-    spec_content = '''# -*- mode: python ; coding: utf-8 -*-
+    # 动态获取matplotlib数据路径
+    try:
+        import matplotlib
+        mpl_data_dir = matplotlib.get_data_path()
+        print(f"📍 matplotlib数据目录: {mpl_data_dir}")
+    except ImportError:
+        print("❌ matplotlib未安装，无法获取数据目录")
+        return False
+    
+    spec_content = f'''# -*- mode: python ; coding: utf-8 -*-
 
 import sys
 from pathlib import Path
@@ -51,6 +68,8 @@ a = Analysis(
         # 包含配置和资源文件
         ('artalekey/core', 'artalekey/core'),
         ('artalekey/ui', 'artalekey/ui'),
+        # 包含matplotlib数据文件
+        (r'{mpl_data_dir}', 'matplotlib/mpl-data'),
     ],
     hiddenimports=[
         'PyQt6.QtCore',
@@ -63,17 +82,19 @@ a = Analysis(
         'Foundation',
         'Quartz',
         'objc',
+        # matplotlib相关
+        'matplotlib.backends.backend_qt5agg',
+        'matplotlib.figure',
+        'matplotlib.pyplot',
+        'matplotlib.dates',
+        'numpy',
     ],
     hookspath=[],
-    hooksconfig={},
+    hooksconfig={{}},
     runtime_hooks=[],
     excludes=[],
     noarchive=False,
 )
-
-# 过滤掉不需要的文件
-a.datas = [x for x in a.datas if not x[0].startswith('matplotlib')]
-a.datas = [x for x in a.datas if not x[0].startswith('numpy')]
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=None)
 
@@ -113,7 +134,7 @@ app = BUNDLE(
     icon='assets/icon.icns' if Path('assets/icon.icns').exists() else None,
     bundle_identifier='com.chenpx976.artalekey',
     version='1.0.0',
-    info_plist={
+    info_plist={{
         'CFBundleName': 'ArtaleKey',
         'CFBundleDisplayName': 'ArtaleKey',
         'CFBundleGetInfoString': "ArtaleKey - 快捷键管理器",
@@ -128,7 +149,7 @@ app = BUNDLE(
         # 请求必要的权限
         'NSAccessibilityUsageDescription': 'ArtaleKey需要辅助功能权限来模拟按键',
         'NSAppleEventsUsageDescription': 'ArtaleKey需要AppleScript权限来检测窗口状态',
-    },
+    }},
 )
 '''
     
@@ -136,6 +157,7 @@ app = BUNDLE(
         f.write(spec_content)
     
     print("✅ 配置文件已创建: ArtaleKey.spec")
+    return True
 
 def create_app_icon():
     """创建应用图标"""
@@ -282,7 +304,8 @@ def main():
     print("\n📦 开始打包流程...")
     
     # 创建配置文件
-    create_spec_file()
+    if not create_spec_file():
+        return 1
     
     # 创建图标指南
     create_app_icon()
