@@ -2,27 +2,72 @@ import os
 import base64
 import yaml
 import re
+import json
 from typing import Optional, Dict, Any
 from openai import OpenAI
 from PIL import Image
 from io import BytesIO
 from artalekey.core.logger import performance_logger
 from artalekey.core.config import config_manager
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
+import threading
 
 class LLMProcessor:
     """LLM 图片处理器 - 使用大模型识别游戏界面信息"""
+    
+    # 类级别的线程池，避免重复创建
+    _thread_pool = None
+    _thread_pool_lock = threading.RLock()
     
     def __init__(self):
         self.client = None
         self._setup_client()
         
+        # 确保线程池初始化
+        self._ensure_thread_pool()
+        
         # LLM 提示词
-        self.prompt = """提取图片中的下面相关信息，输出在 <output/> 中，使用 yaml 格式
-等级
-当前等级最大 HP
-当前等级最大 MP
-当前经验值
-当前经验值百分比"""
+        self.prompt = """你是一个冒险岛游戏的高级玩家，可以根据我发送给你的截图，分析获取到下面的信息，输出为标准JSON格式：
+
+请返回以下JSON结构，严格按照字段名输出：
+{
+  "level": 角色等级 (数字),
+  "character_name": "角色名称" (字符串),
+  "character_class": "角色职业" (字符串),
+  "map_name": "当前地图名称" (字符串),
+  "max_hp": 当前等级最大HP (数字),
+  "max_mp": 当前等级最大MP (数字),
+  "experience_value": 当前经验值 (数字),
+  "experience_percentage": 当前经验值百分比 (数字，不含%符号),
+  "money": 角色当前持有金钱 (数字)
+}
+
+注意事项：
+- 仔细观察截图中的所有界面元素，包括状态栏、角色信息面板、地图名称等
+- 如果某个信息不可见或无法确定，请设置为null
+- 数字字段请只输出纯数字，不包含逗号、单位等
+- 百分比字段请只输出数字部分，如65.5而不是65.5%
+- 请确保输出为有效的JSON格式"""
+    
+    @classmethod
+    def _ensure_thread_pool(cls):
+        """确保线程池已初始化"""
+        if cls._thread_pool is None:
+            with cls._thread_pool_lock:
+                if cls._thread_pool is None:
+                    cls._thread_pool = ThreadPoolExecutor(max_workers=2, thread_name_prefix="LLM-")
+                    performance_logger.info("LLM 处理器线程池已初始化")
+    
+    @classmethod
+    def _cleanup_thread_pool(cls):
+        """清理线程池（应用关闭时调用）"""
+        if cls._thread_pool is not None:
+            with cls._thread_pool_lock:
+                if cls._thread_pool is not None:
+                    cls._thread_pool.shutdown(wait=False)
+                    cls._thread_pool = None
+                    performance_logger.info("LLM 处理器线程池已清理")
     
     def _setup_client(self):
         """设置 OpenAI 客户端"""
@@ -31,8 +76,17 @@ class LLMProcessor:
             llm_config = config_manager.get('llm', {})
             api_key = llm_config.get('api_key', '')
             
+            performance_logger.info(f"LLM 客户端初始化 - 密钥状态: {'已设置' if api_key else '未设置'}")
+            
             if not api_key:
-                performance_logger.error("未设置 OPENROUTER_API_KEY，请在设置页面配置")
+                performance_logger.warning("API 密钥为空，LLM 客户端初始化跳过")
+                self.client = None
+                return
+            
+            # 验证密钥格式
+            if len(api_key) < 10:
+                performance_logger.error(f"API 密钥格式可能不正确，长度: {len(api_key)}")
+                self.client = None
                 return
             
             self.client = OpenAI(
@@ -40,14 +94,17 @@ class LLMProcessor:
                 api_key=api_key,
             )
             
-            performance_logger.info("LLM 客户端初始化成功")
+            performance_logger.info(f"LLM 客户端初始化成功，密钥长度: {len(api_key)}")
             
         except Exception as e:
             performance_logger.error(f"LLM 客户端初始化失败: {e}")
+            self.client = None
     
     def update_api_key(self, api_key: str):
         """更新 API 密钥并重新初始化客户端"""
         try:
+            performance_logger.info(f"更新 API 密钥 - 新密钥长度: {len(api_key) if api_key else 0}")
+            
             # 更新配置
             llm_config = config_manager.get('llm', {})
             llm_config['api_key'] = api_key
@@ -56,10 +113,15 @@ class LLMProcessor:
             # 重新初始化客户端
             self._setup_client()
             
-            performance_logger.info("API 密钥已更新")
+            # 验证客户端是否成功初始化
+            if self.client:
+                performance_logger.info("API 密钥更新成功，LLM 客户端已重新初始化")
+            else:
+                performance_logger.error("API 密钥更新后，LLM 客户端初始化失败")
             
         except Exception as e:
             performance_logger.error(f"更新 API 密钥失败: {e}")
+            self.client = None
     
     def _image_to_base64(self, image: Image.Image) -> str:
         """将图片转换为 base64 编码"""
@@ -86,76 +148,82 @@ class LLMProcessor:
             return ""
     
     def _parse_llm_response(self, response_text: str) -> Dict[str, Any]:
-        """解析 LLM 返回的 YAML 格式数据"""
+        """解析 LLM 返回的 JSON 格式数据"""
         try:
-            # 提取 <output/> 标签中的内容
-            output_match = re.search(r'<output/?>\s*(.*?)\s*</output>', response_text, re.DOTALL | re.IGNORECASE)
-            if output_match:
-                yaml_content = output_match.group(1).strip()
-            else:
-                # 如果没有找到标签，尝试查找 YAML 格式的内容
-                yaml_patterns = [
-                    r'```yaml\s*(.*?)\s*```',
-                    r'```\s*((?:等级|level).*?)\s*```',
-                ]
-                
-                for pattern in yaml_patterns:
-                    match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
-                    if match:
-                        yaml_content = match.group(1).strip()
-                        break
-                else:
-                    # 最后尝试直接解析整个响应
-                    yaml_content = response_text.strip()
+            # 提取JSON内容
+            json_content = None
             
-            performance_logger.info(f"提取的 YAML 内容: {yaml_content}")
+            # 尝试多种提取方法
+            patterns = [
+                r'```json\s*(.*?)\s*```',
+                r'```\s*(\{.*?\})\s*```',
+                r'(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})',
+            ]
             
-            # 解析 YAML
-            parsed_data = yaml.safe_load(yaml_content)
+            for pattern in patterns:
+                match = re.search(pattern, response_text, re.DOTALL | re.IGNORECASE)
+                if match:
+                    json_content = match.group(1).strip()
+                    break
+            
+            # 如果没有找到，尝试直接解析整个响应
+            if not json_content:
+                json_content = response_text.strip()
+            
+            performance_logger.info(f"提取的 JSON 内容: {json_content}")
+            
+            # 解析 JSON
+            parsed_data = json.loads(json_content)
             
             if not isinstance(parsed_data, dict):
                 performance_logger.error(f"解析的数据不是字典格式: {type(parsed_data)}")
                 return {}
             
-            # 标准化字段名
-            standardized_data = {}
+            # 数据清理和验证
+            cleaned_data = {}
             
-            # 映射可能的字段名
-            field_mappings = {
-                'level': ['等级', 'level', 'lv', 'Level'],
-                'max_hp': ['当前等级最大 HP', '最大HP', 'max_hp', 'hp', '最大血量', 'HP', '生命值'],
-                'max_mp': ['当前等级最大 MP', '最大MP', 'max_mp', 'mp', '最大魔法值', 'MP', '魔法值'],
-                'experience_value': ['当前经验值', '经验值', 'exp', 'experience', '经验', 'EXP'],
-                'experience_percentage': ['当前经验值百分比', '经验百分比', 'exp_percent', '经验值百分比', '经验进度']
+            # 直接使用字段名，无需映射
+            field_types = {
+                'level': int,
+                'character_name': str,
+                'character_class': str,
+                'map_name': str,
+                'max_hp': int,
+                'max_mp': int,
+                'experience_value': int,
+                'experience_percentage': float,
+                'money': int
             }
             
-            for standard_key, possible_keys in field_mappings.items():
-                for key in possible_keys:
-                    if key in parsed_data:
-                        value = parsed_data[key]
-                        # 清理数值
-                        if isinstance(value, str):
-                            # 移除非数字字符（除了小数点）
-                            cleaned_value = re.sub(r'[^\d.]', '', value)
-                            if cleaned_value:
-                                try:
-                                    if '.' in cleaned_value:
-                                        standardized_data[standard_key] = float(cleaned_value)
+            for field, expected_type in field_types.items():
+                if field in parsed_data:
+                    value = parsed_data[field]
+                    if value is not None:
+                        try:
+                            if expected_type in [int, float]:
+                                # 清理数字字段
+                                if isinstance(value, str):
+                                    cleaned_value = re.sub(r'[^\d.]', '', value)
+                                    if cleaned_value:
+                                        cleaned_data[field] = expected_type(float(cleaned_value))
                                     else:
-                                        standardized_data[standard_key] = int(cleaned_value)
-                                except ValueError:
-                                    standardized_data[standard_key] = value
+                                        cleaned_data[field] = None
+                                else:
+                                    cleaned_data[field] = expected_type(value)
                             else:
-                                standardized_data[standard_key] = value
-                        else:
-                            standardized_data[standard_key] = value
-                        break
+                                # 字符串字段
+                                cleaned_data[field] = str(value).strip()
+                        except (ValueError, TypeError) as e:
+                            performance_logger.warning(f"字段 {field} 转换失败: {e}, 原值: {value}")
+                            cleaned_data[field] = None
+                    else:
+                        cleaned_data[field] = None
             
-            performance_logger.info(f"标准化后的数据: {standardized_data}")
-            return standardized_data
+            performance_logger.info(f"清理后的数据: {cleaned_data}")
+            return cleaned_data
             
-        except yaml.YAMLError as e:
-            performance_logger.error(f"YAML 解析失败: {e}")
+        except json.JSONDecodeError as e:
+            performance_logger.error(f"JSON 解析失败: {e}")
             return {}
         except Exception as e:
             performance_logger.error(f"解析 LLM 响应失败: {e}")
@@ -223,6 +291,29 @@ class LLMProcessor:
             performance_logger.error(f"LLM 图片处理失败: {e}")
             return {}
     
+    def process_image_async(self, image: Image.Image, callback=None):
+        """异步处理图片并提取游戏数据 - 优化的非阻塞版本"""
+        def run_process():
+            try:
+                performance_logger.info("开始异步 LLM 处理任务")
+                result = self.process_image(image)
+                performance_logger.info("异步 LLM 处理任务完成")
+                if callback:
+                    # 注意：callback 将在线程池线程中执行，需要确保线程安全
+                    callback(result)
+                return result
+            except Exception as e:
+                performance_logger.error(f"异步 LLM 处理失败: {e}")
+                if callback:
+                    callback({})
+                return {}
+        
+        # 使用类级别的线程池，避免创建新的线程池
+        self._ensure_thread_pool()
+        future = self._thread_pool.submit(run_process)
+        performance_logger.info("LLM 处理任务已提交到线程池")
+        return future
+    
     def _convert_to_game_format(self, parsed_data: Dict[str, Any]) -> Dict[str, Any]:
         """将解析的数据转换为符合现有系统的格式"""
         game_data = {}
@@ -230,6 +321,17 @@ class LLMProcessor:
         # 等级
         if 'level' in parsed_data:
             game_data['level'] = parsed_data['level']
+        
+        # 角色信息
+        if 'character_name' in parsed_data:
+            game_data['character_name'] = parsed_data['character_name']
+        
+        if 'character_class' in parsed_data:
+            game_data['character_class'] = parsed_data['character_class']
+        
+        # 地图信息
+        if 'map_name' in parsed_data:
+            game_data['map_name'] = parsed_data['map_name']
         
         # 经验值
         exp_value = parsed_data.get('experience_value')
@@ -248,6 +350,10 @@ class LLMProcessor:
         
         if 'max_mp' in parsed_data:
             game_data['max_mp'] = parsed_data['max_mp']
+        
+        # 金钱
+        if 'money' in parsed_data:
+            game_data['money'] = parsed_data['money']
         
         # 添加处理方式标识
         game_data['processing_method'] = 'llm'

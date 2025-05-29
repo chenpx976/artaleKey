@@ -475,8 +475,17 @@ class TabbedMainWindow(QMainWindow):
         if not config_manager.get('screenshot_ocr', {}) or not config_manager.get('window_filter', {}):
             self.save_config()  # 保存默认配置，确保下次启动能记住状态
         
-        # 加载 API 密钥状态
+        # 加载并应用 API 密钥状态 - 确保 LLM 处理器得到密钥
         self._update_api_key_status()
+        
+        # 重要：确保 LLM 处理器立即获得 API 密钥
+        llm_config = config_manager.get('llm', {})
+        api_key = llm_config.get('api_key', '')
+        if api_key and hasattr(self, 'screenshot_ocr_manager'):
+            self.screenshot_ocr_manager.update_llm_api_key(api_key)
+            performance_logger.info(f"启动时应用 API 密钥到 LLM 处理器，密钥长度: {len(api_key)}")
+        else:
+            performance_logger.warning("启动时未找到 API 密钥或 OCR 管理器未初始化")
         
     def _update_ocr_status(self, ocr_config, target_window):
         """更新OCR状态显示"""
@@ -601,9 +610,9 @@ class TabbedMainWindow(QMainWindow):
         # 刷新窗口状态组件的数据显示
         self.window_status_widget.refresh_data()
         
-        # 刷新可视化组件
+        # 延迟刷新可视化组件，避免与其他刷新冲突
         if hasattr(self, 'visualization_widget'):
-            self.visualization_widget.refresh_data()
+            QTimer.singleShot(500, self.visualization_widget.refresh_data)  # 延迟500ms刷新
         
         # 更新状态栏
         level = game_data.get('level', '未知')
@@ -661,20 +670,43 @@ class TabbedMainWindow(QMainWindow):
         self.save_config()
         
     def closeEvent(self, event):
-        """关闭事件"""
-        # 保存配置
-        self.save_config()
-        
-        # 停止所有服务
-        self.hotkey_listener.stop()
-        self.key_simulator.stop()
-        window_monitor.stop()
-        
-        # 停止窗口状态监控
-        if hasattr(self, 'window_status_widget'):
-            self.window_status_widget.close()
-        
-        event.accept()
+        """窗口关闭事件"""
+        try:
+            performance_logger.info("应用程序正在关闭...")
+            
+            # 停止热键监听器
+            if hasattr(self, 'hotkey_listener') and self.hotkey_listener:
+                performance_logger.info("停止热键监听器...")
+                self.hotkey_listener.stop()
+                self.hotkey_listener.wait(1000)  # 等待最多1秒
+            
+            # 停止按键模拟器
+            if hasattr(self, 'key_simulator') and self.key_simulator:
+                performance_logger.info("停止按键模拟器...")
+                self.key_simulator.stop()
+                self.key_simulator.wait(1000)  # 等待最多1秒
+            
+            # 停止OCR管理器
+            if hasattr(self, 'screenshot_ocr_manager') and self.screenshot_ocr_manager:
+                performance_logger.info("停止OCR管理器...")
+                if self.screenshot_ocr_manager.isRunning():
+                    self.screenshot_ocr_manager.quit()
+                    self.screenshot_ocr_manager.wait(1000)  # 等待最多1秒
+            
+            # 清理LLM处理器线程池
+            try:
+                from artalekey.core.llm_processor import LLMProcessor
+                LLMProcessor._cleanup_thread_pool()
+                performance_logger.info("LLM处理器线程池已清理")
+            except Exception as e:
+                performance_logger.warning(f"清理LLM处理器线程池失败: {e}")
+            
+            performance_logger.info("应用程序关闭完成")
+            
+        except Exception as e:
+            performance_logger.error(f"关闭应用程序时发生错误: {e}")
+        finally:
+            event.accept()
 
     def _toggle_api_key_visibility(self):
         """切换 API 密钥显示/隐藏"""
@@ -693,30 +725,55 @@ class TabbedMainWindow(QMainWindow):
             QMessageBox.warning(self, "警告", "请输入 API 密钥")
             return
         
+        # 基本格式验证
+        if len(api_key) < 10:
+            QMessageBox.warning(self, "警告", "API 密钥格式可能不正确，长度太短")
+            return
+        
         try:
+            performance_logger.info(f"保存 API 密钥，长度: {len(api_key)}")
+            
             # 保存到配置
             llm_config = config_manager.get('llm', {})
             llm_config['api_key'] = api_key
             config_manager.set('llm', llm_config)
             
+            performance_logger.info("API 密钥已保存到配置文件")
+            
             # 更新 LLM 处理器
-            self.screenshot_ocr_manager.update_llm_api_key(api_key)
+            if hasattr(self, 'screenshot_ocr_manager'):
+                performance_logger.info("开始更新 LLM 处理器...")
+                self.screenshot_ocr_manager.update_llm_api_key(api_key)
+                
+                # 验证更新是否成功
+                if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.client:
+                    performance_logger.info("LLM 处理器更新成功")
+                    success_msg = "API 密钥已保存并成功配置 LLM 处理器"
+                else:
+                    performance_logger.warning("LLM 处理器更新失败")
+                    success_msg = "API 密钥已保存，但 LLM 处理器配置可能有问题"
+            else:
+                performance_logger.warning("OCR 管理器未找到")
+                success_msg = "API 密钥已保存，但无法更新 LLM 处理器"
             
             # 更新状态显示
             self._update_api_key_status()
             
-            QMessageBox.information(self, "成功", "API 密钥已保存")
-            performance_logger.info("用户更新了 LLM API 密钥")
+            QMessageBox.information(self, "成功", success_msg)
+            performance_logger.info("用户保存 API 密钥操作完成")
             
         except Exception as e:
-            QMessageBox.critical(self, "错误", f"保存 API 密钥失败: {e}")
-            performance_logger.error(f"保存 API 密钥失败: {e}")
+            error_msg = f"保存 API 密钥失败: {e}"
+            QMessageBox.critical(self, "错误", error_msg)
+            performance_logger.error(error_msg)
     
     def _update_api_key_status(self):
         """更新 API 密钥状态显示"""
         try:
             llm_config = config_manager.get('llm', {})
             api_key = llm_config.get('api_key', '')
+            
+            performance_logger.info(f"更新 API 密钥状态 - 密钥长度: {len(api_key) if api_key else 0}")
             
             if api_key:
                 # 隐藏密钥，只显示前4位和后4位
@@ -728,12 +785,28 @@ class TabbedMainWindow(QMainWindow):
                 self.api_key_status_label.setText(f"已配置: {masked_key}")
                 self.api_key_status_label.setStyleSheet("color: green; font-weight: bold;")
                 
-                # 在输入框中显示当前密钥（如果为空）
-                if not self.api_key_input.text():
-                    self.api_key_input.setText(api_key)
+                # 在输入框中显示当前密钥
+                self.api_key_input.setText(api_key)
+                
+                # 确保 LLM 处理器也更新了密钥
+                if hasattr(self, 'screenshot_ocr_manager'):
+                    performance_logger.info("正在更新 LLM 处理器的 API 密钥...")
+                    self.screenshot_ocr_manager.update_llm_api_key(api_key)
+                    
+                    # 验证LLM处理器是否成功初始化
+                    if hasattr(self.screenshot_ocr_manager, 'llm_processor') and self.screenshot_ocr_manager.llm_processor.client:
+                        performance_logger.info("LLM 处理器 API 密钥更新成功")
+                    else:
+                        performance_logger.warning("LLM 处理器 API 密钥更新后，客户端仍未初始化")
+                else:
+                    performance_logger.warning("OCR 管理器未找到，无法更新 API 密钥")
             else:
                 self.api_key_status_label.setText("未配置")
                 self.api_key_status_label.setStyleSheet("color: gray; font-weight: bold;")
+                self.api_key_input.clear()
+                performance_logger.info("API 密钥未配置")
                 
         except Exception as e:
-            performance_logger.error(f"更新 API 密钥状态失败: {e}") 
+            performance_logger.error(f"更新 API 密钥状态失败: {e}")
+            self.api_key_status_label.setText("状态错误")
+            self.api_key_status_label.setStyleSheet("color: red; font-weight: bold;") 

@@ -3,7 +3,7 @@ import time
 import json
 from datetime import datetime
 from typing import Optional, Dict, Any, List
-from PyQt6.QtCore import QThread, pyqtSignal
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer
 from PIL import Image, ImageGrab
 from artalekey.core.logger import performance_logger
 from artalekey.core.config import config_manager
@@ -27,6 +27,13 @@ class EnhancedOCRManager(QThread):
         
         # LLM 处理器
         self.llm_processor = LLMProcessor()
+        
+        # 异步处理相关
+        self._processing_future = None
+        self._processing_timer = QTimer()
+        self._processing_timer.timeout.connect(self._check_processing_result)
+        self._current_screenshot = None
+        self._current_timestamp = None
         
         # 缓存机制
         self._last_screenshot_hash = None
@@ -115,23 +122,17 @@ class EnhancedOCRManager(QThread):
         return None
     
     def _capture_window_screenshot(self, bounds: Dict) -> Optional[Image.Image]:
-        """截取指定窗口区域的截图 - 只截取下面四分之一区域"""
+        """截取指定窗口区域的完整截图"""
         try:
-            # 获取原始窗口边界
+            # 获取窗口边界
             x, y, width, height = bounds['x'], bounds['y'], bounds['width'], bounds['height']
             
-            # 计算下面四分之一区域的坐标
-            quarter_height = height // 4
-            new_y = y + height - quarter_height  # 从窗口底部往上四分之一处开始
-            new_height = quarter_height
+            performance_logger.info(f"截取完整窗口区域: {x},{y},{width},{height}")
             
-            performance_logger.info(f"原始窗口区域: {x},{y},{width},{height}")
-            performance_logger.info(f"截取下面四分之一区域: {x},{new_y},{width},{new_height}")
+            # 使用PIL截取完整窗口区域
+            screenshot = ImageGrab.grab(bbox=(x, y, x + width, y + height), all_screens=True)
             
-            # 使用PIL截取指定区域
-            screenshot = ImageGrab.grab(bbox=(x, new_y, x + width, new_y + new_height), all_screens=True)
-            
-            performance_logger.info(f"成功截取窗口下面四分之一区域，尺寸: {screenshot.width}x{screenshot.height}")
+            performance_logger.info(f"成功截取完整窗口区域，尺寸: {screenshot.width}x{screenshot.height}")
             return screenshot
             
         except Exception as e:
@@ -265,8 +266,49 @@ class EnhancedOCRManager(QThread):
                 screenshot.save(screenshot_path)
                 performance_logger.info(f"截图已保存: {screenshot_path}")
             
-            # 2. 进行LLM处理
-            llm_data = self.llm_processor.process_image(screenshot)
+            # 2. 异步进行LLM处理
+            self._current_screenshot = screenshot
+            self._current_timestamp = timestamp
+            self._current_screenshot_path = screenshot_path
+            self._current_start_time = start_time
+            
+            performance_logger.info("开始异步 LLM 图片处理...")
+            
+            # 使用优化的异步方式处理，不传递回调函数
+            # 回调会在_check_processing_result中在主线程执行
+            self._processing_future = self.llm_processor.process_image_async(screenshot)
+            
+            # 启动定时器检查处理结果
+            self._processing_timer.start(100)  # 每100ms检查一次
+            
+        except Exception as e:
+            error_msg = f"单次LLM处理过程出错: {e}"
+            performance_logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+    
+    def _check_processing_result(self):
+        """检查异步处理结果"""
+        if self._processing_future and self._processing_future.done():
+            self._processing_timer.stop()
+            
+            try:
+                # 获取异步处理结果
+                llm_data = self._processing_future.result()
+                # 在主线程中处理结果
+                self._on_llm_processing_complete(llm_data)
+                
+            except Exception as e:
+                performance_logger.error(f"获取异步处理结果失败: {e}")
+                self.error_occurred.emit(f"LLM处理失败: {e}")
+            finally:
+                self._processing_future = None
+    
+    def _on_llm_processing_complete(self, llm_data: Dict[str, Any]):
+        """LLM处理完成回调"""
+        try:
+            timestamp = self._current_timestamp
+            screenshot_path = self._current_screenshot_path
+            start_time = self._current_start_time
             
             # 3. 组装游戏数据
             game_data = {
@@ -276,11 +318,19 @@ class EnhancedOCRManager(QThread):
                 **llm_data
             }
             
-            # 检查是否有有效数据
-            if (game_data.get('level') is None and 
-                game_data.get('experience') is None and
-                game_data.get('max_hp') is None and
-                game_data.get('max_mp') is None):
+            # 检查是否有有效数据 - 更新检查条件以包含新字段
+            has_valid_data = any([
+                game_data.get('level') is not None,
+                game_data.get('experience') is not None,
+                game_data.get('max_hp') is not None,
+                game_data.get('max_mp') is not None,
+                game_data.get('character_name') is not None,
+                game_data.get('character_class') is not None,
+                game_data.get('map_name') is not None,
+                game_data.get('money') is not None
+            ])
+            
+            if not has_valid_data:
                 performance_logger.warning("未提取到有效的游戏数据，不保存到数据库")
                 self.error_occurred.emit("未识别到有效的游戏数据")
                 return
@@ -304,10 +354,10 @@ class EnhancedOCRManager(QThread):
             total_time = time.time() - start_time
             performance_logger.info(f"单次LLM处理完成: {timestamp}, 总耗时: {total_time:.2f}秒")
             performance_logger.info(f"处理结果已保存: {result_path}")
-            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}, HP={game_data.get('max_hp')}, MP={game_data.get('max_mp')}")
+            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 角色名={game_data.get('character_name')}, 职业={game_data.get('character_class')}, 地图={game_data.get('map_name')}, 经验={game_data.get('experience')}, HP={game_data.get('max_hp')}, MP={game_data.get('max_mp')}, 金钱={game_data.get('money')}")
             
         except Exception as e:
-            error_msg = f"单次LLM处理过程出错: {e}"
+            error_msg = f"LLM处理完成回调出错: {e}"
             performance_logger.error(error_msg)
             self.error_occurred.emit(error_msg)
     
@@ -323,16 +373,9 @@ class EnhancedOCRManager(QThread):
                 else:
                     performance_logger.warning("无法获取窗口边界，使用全屏截图")
                     screenshot = ImageGrab.grab(all_screens=True)
-                    # 裁剪底部四分之一
-                    width, height = screenshot.size
-                    quarter_height = height // 4
-                    screenshot = screenshot.crop((0, height - quarter_height, width, height))
             else:
-                # 全屏截图并裁剪底部四分之一
+                # 全屏截图
                 screenshot = ImageGrab.grab(all_screens=True)
-                width, height = screenshot.size
-                quarter_height = height // 4
-                screenshot = screenshot.crop((0, height - quarter_height, width, height))
             
             return screenshot
             

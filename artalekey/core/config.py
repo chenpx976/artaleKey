@@ -48,6 +48,9 @@ class ConfigManager(QObject):
                 'save_screenshots': False,
                 'capture_window_only': True,  # 只截取目标窗口内容
                 'screenshot_scale': 2.0       # 截图缩放倍数，2.0表示2x分辨率
+            },
+            'llm': {
+                'api_key': ''  # OpenRouter API 密钥
             }
         }
         
@@ -59,18 +62,36 @@ class ConfigManager(QObject):
     def _load_config(self):
         """加载配置"""
         try:
-            # 尝试从QSettings加载
-            for key in self.default_config:
-                value = self.settings.value(key, self.default_config[key])
-                if isinstance(value, str) and value.startswith('{'):
+            # 先复制默认配置
+            self._config_cache = self.default_config.copy()
+            
+            # 获取所有已保存的配置键
+            all_keys = self.settings.allKeys()
+            
+            # 加载所有保存的配置项
+            for key in all_keys:
+                value = self.settings.value(key)
+                if isinstance(value, str) and (value.startswith('{') or value.startswith('[')):
                     # 处理JSON字符串
                     try:
                         value = json.loads(value)
                     except json.JSONDecodeError:
-                        value = self.default_config[key]
+                        # 如果解析失败，检查是否有默认值
+                        if key in self.default_config:
+                            value = self.default_config[key]
+                        else:
+                            continue
+                
+                # 设置到缓存中
                 self._config_cache[key] = value
+            
+            # 确保所有默认配置键都存在
+            for key in self.default_config:
+                if key not in self._config_cache:
+                    self._config_cache[key] = self.default_config[key]
                 
             performance_logger.info("Configuration loaded successfully")
+            performance_logger.debug(f"Loaded config keys: {list(self._config_cache.keys())}")
             
         except Exception as e:
             performance_logger.error(f"Failed to load config: {e}")

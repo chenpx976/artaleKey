@@ -72,6 +72,11 @@ class GameDataDatabase:
                         id INTEGER PRIMARY KEY AUTOINCREMENT,
                         timestamp TEXT NOT NULL,
                         level INTEGER,
+                        character_name TEXT,
+                        character_class TEXT,
+                        map_name TEXT,
+                        max_hp INTEGER,
+                        max_mp INTEGER,
                         experience TEXT,
                         money TEXT,
                         raw_data TEXT,
@@ -79,12 +84,40 @@ class GameDataDatabase:
                     )
                 ''')
                 
+                # 添加新字段（如果不存在）
+                new_columns = [
+                    ('character_name', 'TEXT'),
+                    ('character_class', 'TEXT'),
+                    ('map_name', 'TEXT'),
+                    ('max_hp', 'INTEGER'),
+                    ('max_mp', 'INTEGER')
+                ]
+                
+                for column_name, column_type in new_columns:
+                    try:
+                        cursor.execute(f'ALTER TABLE game_data ADD COLUMN {column_name} {column_type}')
+                        performance_logger.info(f"已添加新字段: {column_name}")
+                    except sqlite3.OperationalError as e:
+                        if "duplicate column name" in str(e).lower():
+                            performance_logger.debug(f"字段 {column_name} 已存在")
+                        else:
+                            performance_logger.warning(f"添加字段 {column_name} 失败: {e}")
+                
                 # 创建索引
                 cursor.execute('''
                     CREATE INDEX IF NOT EXISTS idx_timestamp ON game_data(timestamp)
                 ''')
                 cursor.execute('''
                     CREATE INDEX IF NOT EXISTS idx_created_at ON game_data(created_at)
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_character_name ON game_data(character_name)
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_level ON game_data(level)
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_map_name ON game_data(map_name)
                 ''')
                 
                 conn.commit()
@@ -119,6 +152,11 @@ class GameDataDatabase:
                 
                 timestamp = game_data.get('timestamp', datetime.now().strftime("%Y%m%d_%H%M%S"))
                 level = game_data.get('level')
+                character_name = game_data.get('character_name')
+                character_class = game_data.get('character_class')
+                map_name = game_data.get('map_name')
+                max_hp = game_data.get('max_hp')
+                max_mp = game_data.get('max_mp')
                 experience = game_data.get('experience')
                 money = game_data.get('money')
                 
@@ -133,12 +171,14 @@ class GameDataDatabase:
                     money = json.dumps(money, ensure_ascii=False)
                 
                 cursor.execute('''
-                    INSERT INTO game_data (timestamp, level, experience, money, raw_data)
-                    VALUES (?, ?, ?, ?, ?)
-                ''', (timestamp, level, experience, money, raw_data))
+                    INSERT INTO game_data (timestamp, level, character_name, character_class, 
+                                         map_name, max_hp, max_mp, experience, money, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (timestamp, level, character_name, character_class, map_name, 
+                      max_hp, max_mp, experience, money, raw_data))
                 
                 conn.commit()
-                performance_logger.info(f"游戏数据已保存到数据库: Level={level}, Exp={experience}, Money={money}")
+                performance_logger.info(f"游戏数据已保存到数据库: Level={level}, Character={character_name}, Class={character_class}, Map={map_name}, Exp={experience}, Money={money}")
                 return True
                 
         except Exception as e:
@@ -152,7 +192,8 @@ class GameDataDatabase:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT timestamp, level, experience, money, raw_data, created_at
+                    SELECT timestamp, level, character_name, character_class, map_name,
+                           max_hp, max_mp, experience, money, raw_data, created_at
                     FROM game_data
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -161,14 +202,14 @@ class GameDataDatabase:
                 row = cursor.fetchone()
                 if row:
                     # 尝试反序列化复杂数据类型
-                    experience = row[2]
+                    experience = row[7]
                     if experience and isinstance(experience, str) and experience.startswith('{'):
                         try:
                             experience = json.loads(experience)
                         except:
                             pass
                     
-                    money = row[3]
+                    money = row[8]
                     if money and isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
                         try:
                             money = json.loads(money)
@@ -178,10 +219,15 @@ class GameDataDatabase:
                     return {
                         'timestamp': row[0],
                         'level': row[1],
+                        'character_name': row[2],
+                        'character_class': row[3],
+                        'map_name': row[4],
+                        'max_hp': row[5],
+                        'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[4]) if row[4] else {},
-                        'created_at': row[5]
+                        'raw_data': json.loads(row[9]) if row[9] else {},
+                        'created_at': row[10]
                     }
                     
         except Exception as e:
@@ -196,7 +242,8 @@ class GameDataDatabase:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT timestamp, level, experience, money, raw_data, created_at
+                    SELECT timestamp, level, character_name, character_class, map_name,
+                           max_hp, max_mp, experience, money, raw_data, created_at
                     FROM game_data
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -206,14 +253,14 @@ class GameDataDatabase:
                 result = []
                 for row in rows:
                     # 尝试反序列化复杂数据类型
-                    experience = row[2]
+                    experience = row[7]
                     if experience and isinstance(experience, str) and experience.startswith('{'):
                         try:
                             experience = json.loads(experience)
                         except:
                             pass
                     
-                    money = row[3]
+                    money = row[8]
                     if money and isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
                         try:
                             money = json.loads(money)
@@ -223,10 +270,15 @@ class GameDataDatabase:
                     result.append({
                         'timestamp': row[0],
                         'level': row[1],
+                        'character_name': row[2],
+                        'character_class': row[3],
+                        'map_name': row[4],
+                        'max_hp': row[5],
+                        'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[4]) if row[4] else {},
-                        'created_at': row[5]
+                        'raw_data': json.loads(row[9]) if row[9] else {},
+                        'created_at': row[10]
                     })
                 return result
                 
@@ -241,7 +293,8 @@ class GameDataDatabase:
                 cursor = conn.cursor()
                 
                 cursor.execute('''
-                    SELECT timestamp, level, experience, money, raw_data, created_at
+                    SELECT timestamp, level, character_name, character_class, map_name,
+                           max_hp, max_mp, experience, money, raw_data, created_at
                     FROM game_data
                     WHERE created_at BETWEEN ? AND ?
                     ORDER BY created_at DESC
@@ -251,14 +304,14 @@ class GameDataDatabase:
                 result = []
                 for row in rows:
                     # 尝试反序列化复杂数据类型
-                    experience = row[2]
+                    experience = row[7]
                     if experience and isinstance(experience, str) and experience.startswith('{'):
                         try:
                             experience = json.loads(experience)
                         except:
                             pass
                     
-                    money = row[3]
+                    money = row[8]
                     if money and isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
                         try:
                             money = json.loads(money)
@@ -268,10 +321,15 @@ class GameDataDatabase:
                     result.append({
                         'timestamp': row[0],
                         'level': row[1],
+                        'character_name': row[2],
+                        'character_class': row[3],
+                        'map_name': row[4],
+                        'max_hp': row[5],
+                        'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[4]) if row[4] else {},
-                        'created_at': row[5]
+                        'raw_data': json.loads(row[9]) if row[9] else {},
+                        'created_at': row[10]
                     })
                 return result
                 
@@ -352,7 +410,7 @@ class GameDataDatabase:
                 where_clause = " AND ".join(where_conditions)
                 
                 query = f'''
-                    SELECT timestamp, level, experience, created_at
+                    SELECT timestamp, level, character_name, map_name, experience, created_at
                     FROM game_data
                     WHERE {where_clause}
                     ORDER BY created_at ASC
@@ -363,7 +421,7 @@ class GameDataDatabase:
                 
                 result = []
                 for row in rows:
-                    experience = row[2]
+                    experience = row[4]
                     if experience and isinstance(experience, str) and experience.startswith('{'):
                         try:
                             experience = json.loads(experience)
@@ -374,8 +432,10 @@ class GameDataDatabase:
                         result.append({
                             'timestamp': row[0],
                             'level': row[1],
+                            'character_name': row[2],
+                            'map_name': row[3],
                             'experience': experience,
-                            'created_at': row[3]
+                            'created_at': row[5]
                         })
                 
                 performance_logger.info(f"获取到 {len(result)} 条可视化数据，等级过滤: {level_filter}, 时间限制: {hours_limit}小时")
@@ -502,11 +562,21 @@ class GameDataDatabase:
                 cursor.execute('SELECT MAX(level) FROM game_data WHERE level IS NOT NULL')
                 max_level = cursor.fetchone()[0]
                 
+                # 角色数量
+                cursor.execute('SELECT COUNT(DISTINCT character_name) FROM game_data WHERE character_name IS NOT NULL')
+                character_count = cursor.fetchone()[0]
+                
+                # 地图数量
+                cursor.execute('SELECT COUNT(DISTINCT map_name) FROM game_data WHERE map_name IS NOT NULL')
+                map_count = cursor.fetchone()[0]
+                
                 return {
                     'total_records': total_count,
                     'earliest_record': min_date,
                     'latest_record': max_date,
-                    'max_level': max_level
+                    'max_level': max_level,
+                    'character_count': character_count,
+                    'map_count': map_count
                 }
                 
         except Exception as e:
