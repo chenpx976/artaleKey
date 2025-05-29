@@ -14,19 +14,16 @@ from artalekey.core.window_detector import WindowDetector
 from artalekey.core.database import game_db
 
 class EnhancedOCRManager(QThread):
-    """增强的OCR管理器 - 使用EasyOCR，优化性能"""
+    """增强的OCR管理器 - 使用EasyOCR，支持单次触发模式"""
     
     # 信号定义
-    ocr_started = pyqtSignal()
-    ocr_stopped = pyqtSignal()
+    ocr_triggered = pyqtSignal()       # OCR触发信号
     data_extracted = pyqtSignal(dict)  # 发送提取的数据
     error_occurred = pyqtSignal(str)   # 发送错误信息
     
     def __init__(self, parent=None):
         super().__init__(parent)
         self.window_detector = WindowDetector()
-        self._running = False
-        self._timer = None
         self._output_folder = None
         self._config = {}
         
@@ -47,6 +44,9 @@ class EnhancedOCRManager(QThread):
         self._cache_max_size = 3
         
         self._setup_output_folder()
+        
+        # 确保OCR引擎已加载
+        self._load_ocr_engine()
         
     def _setup_output_folder(self):
         """设置输出文件夹"""
@@ -132,54 +132,6 @@ class EnhancedOCRManager(QThread):
         self._preprocessed_cache[image_hash] = processed_rgb
         return processed_rgb
     
-    def start_monitoring(self):
-        """开始监控 - 优化版本"""
-        if self._running:
-            return
-        
-        # 延迟加载OCR引擎
-        if not self._ocr_engine_loaded:
-            self._load_ocr_engine()
-            if not self._ocr_engine_loaded:
-                self.error_occurred.emit("EasyOCR引擎加载失败，请检查依赖包安装")
-                return
-            
-        self._running = True
-        self._config = config_manager.get('screenshot_ocr', {})
-        
-        # 清理缓存
-        self._last_screenshot_hash = None
-        self._last_ocr_result = None
-        self._preprocessed_cache.clear()
-        
-        # 如果配置了立即截图，先执行一次
-        if self._config.get('immediate_capture_on_start', True):
-            performance_logger.info("立即执行首次截图和OCR识别")
-            self._take_screenshot_and_ocr()
-        
-        # 设置定时器
-        interval_seconds = self._config.get('interval', 10)
-        self._timer = QTimer()
-        self._timer.timeout.connect(self._take_screenshot_and_ocr)
-        self._timer.start(interval_seconds * 1000)  # 转换为毫秒
-        
-        self.ocr_started.emit()
-        performance_logger.info(f"OCR监控已启动，间隔: {interval_seconds}秒")
-    
-    def stop_monitoring(self):
-        """停止监控"""
-        if not self._running:
-            return
-            
-        self._running = False
-        
-        if self._timer:
-            self._timer.stop()
-            self._timer = None
-            
-        self.ocr_stopped.emit()
-        performance_logger.info("OCR监控已停止")
-    
     def _is_target_window_active(self) -> bool:
         """检查目标窗口是否激活"""
         target_window = self._config.get('target_window', 'MapleStory Worlds')
@@ -260,97 +212,6 @@ class EnhancedOCRManager(QThread):
         except Exception as e:
             performance_logger.error(f"截取窗口截图失败: {e}")
             return None
-    
-    def _take_screenshot_and_ocr(self):
-        """执行截屏和OCR识别 - 优化版本"""
-        if not self._running:
-            return
-            
-        # 检查目标窗口是否激活
-        if not self._is_target_window_active():
-            performance_logger.debug("目标窗口未激活，跳过截屏")
-            return
-            
-        try:
-            start_time = time.time()
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            screenshot = None
-            
-            # 根据配置决定截图方式
-            if self._config.get('capture_window_only', True):
-                # 只截取目标窗口内容
-                window_bounds = self._get_target_window_bounds()
-                if window_bounds:
-                    screenshot = self._capture_window_screenshot(window_bounds)
-                else:
-                    performance_logger.warning("无法获取窗口边界，使用全屏截图")
-                    screenshot = ImageGrab.grab()
-            else:
-                # 全屏截图
-                screenshot = ImageGrab.grab()
-            
-            if screenshot is None:
-                performance_logger.error("截图失败")
-                return
-            
-            # 检查是否为重复截图
-            screenshot_hash = self._get_image_hash(screenshot)
-            if screenshot_hash == self._last_screenshot_hash and self._last_ocr_result:
-                performance_logger.debug("检测到重复截图，使用缓存结果")
-                self.data_extracted.emit(self._last_ocr_result)
-                return
-            
-            self._last_screenshot_hash = screenshot_hash
-            
-            # 保存截图（如果配置启用）
-            screenshot_path = None
-            if self._config.get('save_screenshots', True):
-                screenshot_path = os.path.join(
-                    self._output_folder, 'screenshots', 
-                    f"screenshot_{timestamp}.png"
-                )
-                screenshot.save(screenshot_path)
-                performance_logger.info(f"截图已保存: {screenshot_path}")
-            
-            # 进行OCR识别
-            ocr_results = self._perform_ocr(screenshot)
-            
-            # 提取游戏数据
-            game_data = self._extract_game_data(ocr_results)
-            game_data['timestamp'] = timestamp
-            game_data['screenshot_path'] = screenshot_path
-            
-            # 缓存OCR结果
-            self._last_ocr_result = game_data.copy()
-            
-            # 使用EasyOCR自带的可视化功能
-            easyocr_viz_path = self._create_easyocr_visualization(
-                screenshot, ocr_results, timestamp
-            )
-            game_data['visualization_path'] = easyocr_viz_path
-            
-            # 保存OCR结果
-            ocr_result_path = self._save_ocr_result(game_data, timestamp)
-            
-            # 保存到数据库
-            try:
-                game_db.insert_game_data(game_data)
-                performance_logger.info("游戏数据已保存到数据库")
-            except Exception as e:
-                performance_logger.error(f"保存数据到数据库失败: {e}")
-            
-            # 发送数据信号
-            self.data_extracted.emit(game_data)
-            
-            total_time = time.time() - start_time
-            performance_logger.info(f"截屏OCR完成: {timestamp}, 总耗时: {total_time:.2f}秒")
-            performance_logger.info(f"OCR结果已保存: {ocr_result_path}")
-            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}, 金钱={game_data.get('money')}")
-            
-        except Exception as e:
-            error_msg = f"增强截屏OCR过程出错: {e}"
-            performance_logger.error(error_msg)
-            self.error_occurred.emit(error_msg)
     
     def _perform_ocr(self, image: Image.Image) -> Dict[str, Any]:
         """执行EasyOCR识别"""
@@ -953,4 +814,122 @@ class EnhancedOCRManager(QThread):
     def run(self):
         """线程运行方法"""
         # 这个方法在QThread中是必需的，但我们使用QTimer，所以保持空实现
-        pass 
+        pass
+    
+    def trigger_ocr(self):
+        """触发单次OCR识别 - 新的工作流程"""
+        # 更新配置
+        self._config = config_manager.get('screenshot_ocr', {})
+        
+        # 1. 检查目标窗口是否激活
+        if not self._is_target_window_active():
+            performance_logger.warning("目标窗口未激活，无法进行OCR识别")
+            self.error_occurred.emit("目标窗口未激活，请确保游戏窗口在前台")
+            return
+        
+        # 2. 检查OCR引擎是否已加载
+        if not self._ocr_engine_loaded:
+            self._load_ocr_engine()
+            if not self._ocr_engine_loaded:
+                self.error_occurred.emit("EasyOCR引擎加载失败，请检查依赖包安装")
+                return
+        
+        # 发送触发信号
+        self.ocr_triggered.emit()
+        performance_logger.info("OCR触发，开始执行截图和识别...")
+        
+        # 3. 执行截图和OCR识别
+        self._perform_single_ocr()
+    
+    def _perform_single_ocr(self):
+        """执行单次截图和OCR识别"""
+        try:
+            start_time = time.time()
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            
+            # 3. 进行截图
+            screenshot = self._capture_screenshot()
+            if screenshot is None:
+                self.error_occurred.emit("截图失败")
+                return
+            
+            # 检查是否为重复截图（可选的性能优化）
+            screenshot_hash = self._get_image_hash(screenshot)
+            if screenshot_hash == self._last_screenshot_hash and self._last_ocr_result:
+                performance_logger.debug("检测到重复截图，使用缓存结果")
+                self.data_extracted.emit(self._last_ocr_result)
+                return
+            
+            self._last_screenshot_hash = screenshot_hash
+            
+            # 保存截图（如果配置启用）
+            screenshot_path = None
+            if self._config.get('save_screenshots', True):
+                screenshot_path = os.path.join(
+                    self._output_folder, 'screenshots', 
+                    f"screenshot_{timestamp}.png"
+                )
+                screenshot.save(screenshot_path)
+                performance_logger.info(f"截图已保存: {screenshot_path}")
+            
+            # 4. 进行OCR识别
+            ocr_results = self._perform_ocr(screenshot)
+            
+            # 5. 提取游戏数据
+            game_data = self._extract_game_data(ocr_results)
+            game_data['timestamp'] = timestamp
+            game_data['screenshot_path'] = screenshot_path
+            
+            # 缓存OCR结果
+            self._last_ocr_result = game_data.copy()
+            
+            # 6. 保存结果和可视化
+            easyocr_viz_path = self._create_easyocr_visualization(
+                screenshot, ocr_results, timestamp
+            )
+            game_data['visualization_path'] = easyocr_viz_path
+            
+            # 保存OCR结果
+            ocr_result_path = self._save_ocr_result(game_data, timestamp)
+            
+            # 保存到数据库
+            try:
+                game_db.insert_game_data(game_data)
+                performance_logger.info("游戏数据已保存到数据库")
+            except Exception as e:
+                performance_logger.error(f"保存数据到数据库失败: {e}")
+            
+            # 7. 发送数据信号给UI更新
+            self.data_extracted.emit(game_data)
+            
+            total_time = time.time() - start_time
+            performance_logger.info(f"单次OCR完成: {timestamp}, 总耗时: {total_time:.2f}秒")
+            performance_logger.info(f"OCR结果已保存: {ocr_result_path}")
+            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}, 金钱={game_data.get('money')}")
+            
+        except Exception as e:
+            error_msg = f"单次OCR过程出错: {e}"
+            performance_logger.error(error_msg)
+            self.error_occurred.emit(error_msg)
+    
+    def _capture_screenshot(self) -> Optional[Image.Image]:
+        """执行截图操作"""
+        try:
+            # 根据配置决定截图方式
+            if self._config.get('capture_window_only', True):
+                # 只截取目标窗口内容
+                window_bounds = self._get_target_window_bounds()
+                if window_bounds:
+                    screenshot = self._capture_window_screenshot(window_bounds)
+                else:
+                    performance_logger.warning("无法获取窗口边界，使用全屏截图")
+                    screenshot = ImageGrab.grab()
+            else:
+                # 全屏截图
+                screenshot = ImageGrab.grab()
+            
+            return screenshot
+            
+        except Exception as e:
+            performance_logger.error(f"截图失败: {e}")
+            return None 

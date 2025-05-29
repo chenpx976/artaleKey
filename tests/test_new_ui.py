@@ -14,7 +14,7 @@ def main():
     """测试新UI设计"""
     try:
         from PyQt6.QtWidgets import QApplication, QMessageBox
-        from artalekey.ui.main_window import MainWindow
+        from artalekey.ui.tabbed_main_window import TabbedMainWindow
         from artalekey.core.window_detector import window_monitor
         
         print("🚀 启动新UI设计测试...")
@@ -32,7 +32,7 @@ def main():
             app.setStyle("Fusion")
         
         # 创建主窗口
-        window = MainWindow()
+        window = TabbedMainWindow()
         window.show()
         
         print("✅ UI启动成功！")

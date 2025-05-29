@@ -310,8 +310,7 @@ class TabbedMainWindow(QMainWindow):
         window_monitor.target_window_deactivated.connect(self.on_target_window_deactivated)
         
         # 截屏OCR管理器信号
-        self.screenshot_ocr_manager.ocr_started.connect(self.on_ocr_started)
-        self.screenshot_ocr_manager.ocr_stopped.connect(self.on_ocr_stopped)
+        self.screenshot_ocr_manager.ocr_triggered.connect(self.on_ocr_triggered)
         self.screenshot_ocr_manager.data_extracted.connect(self.on_game_data_extracted)
         self.screenshot_ocr_manager.error_occurred.connect(self.on_ocr_error)
         
@@ -427,35 +426,25 @@ class TabbedMainWindow(QMainWindow):
     def on_ocr_config_changed(self, config):
         """OCR配置变更"""
         # 更新热键监听器的OCR设置
-        self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 's'))
+        self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 'c'))
         self.hotkey_listener.set_target_window_name(config.get('target_window', 'MapleStory Worlds'))
-        
-        # 如果OCR正在运行，重启以应用新配置
-        if self._is_ocr_running:
-            self.screenshot_ocr_manager.stop_monitoring()
-            self.screenshot_ocr_manager.start_monitoring()
         
         # 保存配置
         self.save_config()
         
     def on_screenshot_ocr_toggle(self):
-        """截屏OCR切换"""
-        if self._is_ocr_running:
-            self.screenshot_ocr_manager.stop_monitoring()
-        else:
-            self.screenshot_ocr_manager.start_monitoring()
+        """截屏OCR触发 - 单次触发模式"""
+        ocr_config = self.ocr_card.get_config()
+        if not ocr_config.get('enabled', False):
+            return
             
-    def on_ocr_started(self):
-        """OCR开始"""
-        self._is_ocr_running = True
-        self.ocr_status_label.setText("OCR功能已启用，正在监控...")
-        self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
-        
-    def on_ocr_stopped(self):
-        """OCR停止"""
-        self._is_ocr_running = False
-        self.ocr_status_label.setText("OCR功能已停止")
-        self.ocr_status_label.setStyleSheet("color: red; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
+        # 调用单次OCR触发
+        self.screenshot_ocr_manager.trigger_ocr()
+            
+    def on_ocr_triggered(self):
+        """OCR触发确认"""
+        self.ocr_status_label.setText("🔄 正在执行OCR识别...")
+        self.ocr_status_label.setStyleSheet("color: orange; font-weight: bold; padding: 8px; border: 1px solid orange; border-radius: 4px;")
         
     def on_game_data_extracted(self, game_data):
         """游戏数据提取完成"""
@@ -504,7 +493,6 @@ class TabbedMainWindow(QMainWindow):
         # 停止所有服务
         self.hotkey_listener.stop()
         self.key_simulator.stop()
-        self.screenshot_ocr_manager.stop_monitoring()
         window_monitor.stop()
         
         # 停止窗口状态监控

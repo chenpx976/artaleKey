@@ -192,33 +192,12 @@ class OCRHotkeyCard(QGroupBox):
         key_layout.addWidget(self.key_combo)
         
         # 提示文字
-        hint_label = QLabel("（仅在目标窗口激活时有效）")
+        hint_label = QLabel("（仅在目标窗口激活时有效，单次触发模式）")
         hint_label.setStyleSheet("color: gray; font-size: 11px;")
         key_layout.addWidget(hint_label)
         
         key_layout.addStretch()
         layout.addLayout(key_layout)
-
-        # 截图间隔设置
-        interval_layout = QVBoxLayout()
-        interval_header = QHBoxLayout()
-        interval_label = QLabel("截图间隔:")
-        interval_label.setMinimumWidth(120)
-        self.interval_value_label = QLabel("10秒")
-        self.interval_value_label.setStyleSheet("color: blue; font-weight: bold;")
-        interval_header.addWidget(interval_label)
-        interval_header.addWidget(self.interval_value_label)
-        interval_header.addStretch()
-        
-        self.interval_slider = QSlider(Qt.Orientation.Horizontal)
-        self.interval_slider.setRange(5, 60)  # 5秒到60秒
-        self.interval_slider.setValue(10)
-        self.interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
-        self.interval_slider.setTickInterval(10)
-        
-        interval_layout.addLayout(interval_header)
-        interval_layout.addWidget(self.interval_slider)
-        layout.addLayout(interval_layout)
         
         # 目标窗口设置
         window_layout = QHBoxLayout()
@@ -238,10 +217,6 @@ class OCRHotkeyCard(QGroupBox):
         self.save_screenshots_check.setChecked(True)
         layout.addWidget(self.save_screenshots_check)
         
-        self.immediate_capture_check = QCheckBox("启动时立即截图")
-        self.immediate_capture_check.setChecked(True)
-        layout.addWidget(self.immediate_capture_check)
-        
         self.window_only_check = QCheckBox("仅截取目标窗口")
         self.window_only_check.setChecked(True)
         layout.addWidget(self.window_only_check)
@@ -249,10 +224,8 @@ class OCRHotkeyCard(QGroupBox):
         # 连接信号 - 使用防抖机制
         self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
         self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
-        self.interval_slider.valueChanged.connect(self._on_interval_changed)
         self.window_input.textChanged.connect(self._on_config_changed_debounced)
         self.save_screenshots_check.stateChanged.connect(self._on_config_changed_debounced)
-        self.immediate_capture_check.stateChanged.connect(self._on_config_changed_debounced)
         self.window_only_check.stateChanged.connect(self._on_config_changed_debounced)
 
     def init_key_options(self):
@@ -271,11 +244,6 @@ class OCRHotkeyCard(QGroupBox):
         
         self.key_combo.setCurrentText('c')  # 默认选择c键
 
-    def _on_interval_changed(self, value):
-        """截图间隔改变处理"""
-        self.interval_value_label.setText(f"{value}秒")
-        self._on_config_changed_debounced()
-
     def _on_config_changed_debounced(self):
         """防抖的配置变更处理"""
         self._debounce_timer.stop()
@@ -290,10 +258,8 @@ class OCRHotkeyCard(QGroupBox):
         return {
             'enabled': self.enabled_check.isChecked(),
             'trigger_key': self.key_combo.currentText(),
-            'interval': self.interval_slider.value(),
             'target_window': self.window_input.text() or 'MapleStory Worlds',
             'save_screenshots': self.save_screenshots_check.isChecked(),
-            'immediate_capture_on_start': self.immediate_capture_check.isChecked(),
             'capture_window_only': self.window_only_check.isChecked(),
             'output_folder': 'ocr_data'
         }
@@ -302,10 +268,8 @@ class OCRHotkeyCard(QGroupBox):
         """设置OCR配置 - 避免触发信号"""
         self.enabled_check.blockSignals(True)
         self.key_combo.blockSignals(True)
-        self.interval_slider.blockSignals(True)
         self.window_input.blockSignals(True)
         self.save_screenshots_check.blockSignals(True)
-        self.immediate_capture_check.blockSignals(True)
         self.window_only_check.blockSignals(True)
         
         try:
@@ -313,24 +277,17 @@ class OCRHotkeyCard(QGroupBox):
                 self.enabled_check.setChecked(config['enabled'])
             if 'trigger_key' in config:
                 self.key_combo.setCurrentText(config['trigger_key'])
-            if 'interval' in config:
-                self.interval_slider.setValue(config['interval'])
-                self.interval_value_label.setText(f"{config['interval']}秒")
             if 'target_window' in config:
                 self.window_input.setText(config['target_window'])
             if 'save_screenshots' in config:
                 self.save_screenshots_check.setChecked(config['save_screenshots'])
-            if 'immediate_capture_on_start' in config:
-                self.immediate_capture_check.setChecked(config['immediate_capture_on_start'])
             if 'capture_window_only' in config:
                 self.window_only_check.setChecked(config['capture_window_only'])
         finally:
             self.enabled_check.blockSignals(False)
             self.key_combo.blockSignals(False)
-            self.interval_slider.blockSignals(False)
             self.window_input.blockSignals(False)
             self.save_screenshots_check.blockSignals(False)
-            self.immediate_capture_check.blockSignals(False)
             self.window_only_check.blockSignals(False)
 
 class ScrollableHotkeyList(QScrollArea):

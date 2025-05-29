@@ -13,7 +13,7 @@ def main():
     """启动UI测试 - 简化版本"""
     try:
         from PyQt6.QtWidgets import QApplication
-        from artalekey.ui.main_window import MainWindow
+        from artalekey.ui.tabbed_main_window import TabbedMainWindow
         
         print("🚀 启动ArtaleKey UI测试...")
         print("🎨 使用修复后的样式系统")
@@ -28,7 +28,7 @@ def main():
             app.setStyle("Fusion")
         
         # 创建主窗口
-        window = MainWindow()
+        window = TabbedMainWindow()
         window.show()
         
         print("✅ UI启动成功！请检查界面显示效果")

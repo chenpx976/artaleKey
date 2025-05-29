@@ -43,12 +43,9 @@ class ConfigManager(QObject):
             'screenshot_ocr': {
                 'enabled': False,
                 'trigger_key': 'c',
-                'interval': 10,  # 截屏间隔（秒）
                 'target_window': 'MapleStory Worlds',
                 'output_folder': 'ocr_data',
-
                 'save_screenshots': True,
-                'immediate_capture_on_start': True,  # 开启时立即截图
                 'capture_window_only': True  # 只截取目标窗口内容
             }
         }
