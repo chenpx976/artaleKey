@@ -49,10 +49,8 @@ class EnhancedOCRManager(QThread):
         # 使用应用数据目录
         self._output_folder = _get_app_data_dir()
         
-        # 创建主文件夹和子文件夹
+        # 创建主文件夹即可
         os.makedirs(self._output_folder, exist_ok=True)
-        os.makedirs(os.path.join(self._output_folder, 'screenshots'), exist_ok=True)
-        os.makedirs(os.path.join(self._output_folder, 'llm_results'), exist_ok=True)
         
         performance_logger.info(f"输出文件夹设置为: {self._output_folder}")
     
@@ -140,71 +138,31 @@ class EnhancedOCRManager(QThread):
             return None
     
     def _save_result(self, game_data: Dict[str, Any], timestamp: str) -> str:
-        """保存处理结果到文件"""
+        """保存处理结果 - 简化版，仅返回时间戳作为标识"""
         try:
-            result_file = os.path.join(
-                self._output_folder, 'llm_results',
-                f"llm_result_{timestamp}.json"
-            )
-            
-            with open(result_file, 'w', encoding='utf-8') as f:
-                json.dump(game_data, f, indent=2, ensure_ascii=False)
-                
-            # 同时追加到汇总文件
-            summary_file = os.path.join(self._output_folder, 'game_data_summary.json')
-            
-            # 读取现有数据
-            summary_data = []
-            if os.path.exists(summary_file):
-                try:
-                    with open(summary_file, 'r', encoding='utf-8') as f:
-                        summary_data = json.load(f)
-                except:
-                    summary_data = []
-            
-            # 添加新数据
-            summary_data.append(game_data)
-            
-            # 保持最近1000条记录
-            if len(summary_data) > 1000:
-                summary_data = summary_data[-1000:]
-            
-            # 保存汇总数据
-            with open(summary_file, 'w', encoding='utf-8') as f:
-                json.dump(summary_data, f, indent=2, ensure_ascii=False)
-            
-            return result_file
+            # 由于数据已经保存在SQLite数据库中，这里不再保存文件
+            performance_logger.info(f"游戏数据处理完成: {timestamp}")
+            return timestamp
                 
         except Exception as e:
             performance_logger.error(f"保存处理结果失败: {e}")
             return ""
     
     def get_latest_data(self) -> Optional[Dict[str, Any]]:
-        """获取最新的游戏数据"""
+        """获取最新的游戏数据 - 从数据库获取"""
         try:
-            summary_file = os.path.join(self._output_folder, 'game_data_summary.json')
-            if os.path.exists(summary_file):
-                with open(summary_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    if data:
-                        return data[-1]
+            return game_db.get_latest_data()
         except Exception as e:
             performance_logger.error(f"获取最新数据失败: {e}")
-        
-        return None
+            return None
     
     def get_data_history(self, limit: int = 100) -> List[Dict[str, Any]]:
-        """获取历史数据"""
+        """获取历史数据 - 从数据库获取"""
         try:
-            summary_file = os.path.join(self._output_folder, 'game_data_summary.json')
-            if os.path.exists(summary_file):
-                with open(summary_file, 'r', encoding='utf-8') as f:
-                    data = json.load(f)
-                    return data[-limit:] if data else []
+            return game_db.get_data_history(limit)
         except Exception as e:
             performance_logger.error(f"获取历史数据失败: {e}")
-        
-        return []
+            return []
     
     def update_llm_api_key(self, api_key: str):
         """更新 LLM API 密钥"""
@@ -256,15 +214,16 @@ class EnhancedOCRManager(QThread):
             
             self._last_screenshot_hash = screenshot_hash
             
-            # 保存截图（如果配置启用）
+            # 保存截图（仅在配置明确启用时）
             screenshot_path = None
-            if self._config.get('save_screenshots', True):
-                screenshot_path = os.path.join(
-                    self._output_folder, 'screenshots', 
-                    f"screenshot_{timestamp}.png"
-                )
+            if self._config.get('save_screenshots', False):
+                screenshot_dir = os.path.join(self._output_folder, 'screenshots')
+                os.makedirs(screenshot_dir, exist_ok=True)
+                screenshot_path = os.path.join(screenshot_dir, f"screenshot_{timestamp}.png")
                 screenshot.save(screenshot_path)
                 performance_logger.info(f"截图已保存: {screenshot_path}")
+            else:
+                performance_logger.debug("截图保存已禁用，跳过文件保存")
             
             # 2. 异步进行LLM处理
             self._current_screenshot = screenshot
@@ -353,7 +312,7 @@ class EnhancedOCRManager(QThread):
             
             total_time = time.time() - start_time
             performance_logger.info(f"单次LLM处理完成: {timestamp}, 总耗时: {total_time:.2f}秒")
-            performance_logger.info(f"处理结果已保存: {result_path}")
+            performance_logger.info(f"处理标识: {result_path}")
             performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 角色名={game_data.get('character_name')}, 职业={game_data.get('character_class')}, 地图={game_data.get('map_name')}, 经验={game_data.get('experience')}, HP={game_data.get('max_hp')}, MP={game_data.get('max_mp')}, 金钱={game_data.get('money')}")
             
         except Exception as e:

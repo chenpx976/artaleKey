@@ -41,7 +41,7 @@ class LLMProcessor:
   "max_mp": 当前等级最大MP (数字),
   "experience_value": 当前经验值 (数字),
   "experience_percentage": 当前经验值百分比 (数字，不含%符号),
-  "money": 角色当前持有金钱 (数字), 这个数字是在 "金幣" 的左边展示的
+  "money": 角色当前持有金钱 (数字), 这个数字是在 "金幣" 的左边展示的, 你找不到就返回 null
 }
 
 注意事项：

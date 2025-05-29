@@ -439,7 +439,7 @@ class TabbedMainWindow(QMainWindow):
                 'enabled': True,  # 默认启用OCR功能
                 'trigger_key': 'c',
                 'target_window': 'MapleStory Worlds',
-                'save_screenshots': False,
+                'save_screenshots': False,  # 默认不保存截图文件
                 'capture_window_only': True,
                 'output_folder': 'ocr_data'
             }
