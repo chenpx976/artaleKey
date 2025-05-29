@@ -273,22 +273,35 @@ class OCRHotkeyCard(QGroupBox):
         self.window_only_check.blockSignals(True)
         
         try:
-            if 'enabled' in config:
-                self.enabled_check.setChecked(config['enabled'])
-            if 'trigger_key' in config:
-                self.key_combo.setCurrentText(config['trigger_key'])
-            if 'target_window' in config:
-                self.window_input.setText(config['target_window'])
-            if 'save_screenshots' in config:
-                self.save_screenshots_check.setChecked(config['save_screenshots'])
-            if 'capture_window_only' in config:
-                self.window_only_check.setChecked(config['capture_window_only'])
+            # 设置默认值并读取配置
+            self.enabled_check.setChecked(config.get('enabled', True))  # 默认启用
+            
+            trigger_key = config.get('trigger_key', 'c')
+            # 确保触发键在下拉列表中
+            if trigger_key:
+                index = self.key_combo.findText(trigger_key)
+                if index >= 0:
+                    self.key_combo.setCurrentIndex(index)
+                else:
+                    # 如果找不到，添加到列表中并选择
+                    self.key_combo.addItem(trigger_key)
+                    self.key_combo.setCurrentText(trigger_key)
+            
+            target_window = config.get('target_window', 'MapleStory Worlds')
+            self.window_input.setText(target_window)
+            
+            self.save_screenshots_check.setChecked(config.get('save_screenshots', False))  # 默认不保存
+            self.window_only_check.setChecked(config.get('capture_window_only', True))   # 默认只截取窗口
+            
         finally:
             self.enabled_check.blockSignals(False)
             self.key_combo.blockSignals(False)
             self.window_input.blockSignals(False)
             self.save_screenshots_check.blockSignals(False)
             self.window_only_check.blockSignals(False)
+        
+        # 手动触发一次配置变更，确保状态同步
+        self._emit_config_changed()
 
 class ScrollableHotkeyList(QScrollArea):
     """简化的可滚动热键列表"""

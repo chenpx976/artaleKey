@@ -41,13 +41,23 @@ class ConfigManager(QObject):
                 'target_apps': []
             },
             'screenshot_ocr': {
-                'enabled': False,
+                'enabled': True,
                 'trigger_key': 'c',
                 'target_window': 'MapleStory Worlds',
                 'output_folder': 'ocr_data',
                 'save_screenshots': False,
                 'capture_window_only': True,  # 只截取目标窗口内容
-                'screenshot_scale': 2.0       # 截图缩放倍数，2.0表示2x分辨率
+                'screenshot_scale': 2.0,       # 截图缩放倍数，2.0表示2x分辨率
+                'preprocessing': {
+                    'orange_optimized': True,    # 默认启用
+                    'standard': False,           # 需要手动启用
+                    'high_contrast': False,      # 需要手动启用
+                    'color_separated': False     # 需要手动启用
+                },
+                'ocr_engines': {
+                    'easyocr': True,             # 默认启用
+                    'tesseract': False           # 需要手动启用
+                }
             }
         }
         

@@ -248,20 +248,203 @@ class GameDataDatabase:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
                 
-                cursor.execute('''
+                # 先查看总记录数和时间范围
+                cursor.execute('SELECT COUNT(*) FROM game_data')
+                total_before = cursor.fetchone()[0]
+                
+                cursor.execute('SELECT MIN(created_at), MAX(created_at) FROM game_data')
+                date_range = cursor.fetchone()
+                performance_logger.info(f"删除前数据: 总计{total_before}条, 时间范围: {date_range[0]} 到 {date_range[1]}")
+                
+                # 计算截止时间
+                cutoff_date = f"datetime('now', '-{days} days')"
+                performance_logger.info(f"将删除 {days} 天前的数据")
+                
+                # 先查看将要删除的记录数
+                cursor.execute(f'''
+                    SELECT COUNT(*) FROM game_data
+                    WHERE created_at < {cutoff_date}
+                ''')
+                to_delete_count = cursor.fetchone()[0]
+                performance_logger.info(f"将要删除 {to_delete_count} 条记录")
+                
+                # 执行删除
+                cursor.execute(f'''
                     DELETE FROM game_data
-                    WHERE created_at < datetime('now', '-{} days')
-                '''.format(days))
+                    WHERE created_at < {cutoff_date}
+                ''')
                 
                 deleted_count = cursor.rowcount
                 conn.commit()
                 
+                # 查看删除后的记录数
+                cursor.execute('SELECT COUNT(*) FROM game_data')
+                total_after = cursor.fetchone()[0]
+                
                 performance_logger.info(f"删除了 {deleted_count} 条 {days} 天前的旧数据")
+                performance_logger.info(f"删除后数据: 总计{total_after}条")
                 return deleted_count
                 
         except Exception as e:
             performance_logger.error(f"删除旧数据失败: {e}")
             return 0
+    
+    def get_experience_data_for_visualization(self, level_filter: int = None, 
+                                            hours_limit: int = 24) -> List[Dict[str, Any]]:
+        """获取用于可视化的经验数据"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 构建查询条件
+                where_conditions = []
+                params = []
+                
+                # 时间限制
+                where_conditions.append("created_at >= datetime('now', '-{} hours')".format(hours_limit))
+                
+                # 等级过滤
+                if level_filter is not None:
+                    where_conditions.append("level = ?")
+                    params.append(level_filter)
+                
+                # 只获取有经验数据的记录
+                where_conditions.append("experience IS NOT NULL")
+                where_conditions.append("experience != ''")
+                
+                where_clause = " AND ".join(where_conditions)
+                
+                query = f'''
+                    SELECT timestamp, level, experience, created_at
+                    FROM game_data
+                    WHERE {where_clause}
+                    ORDER BY created_at ASC
+                '''
+                
+                cursor.execute(query, params)
+                rows = cursor.fetchall()
+                
+                result = []
+                for row in rows:
+                    experience = row[2]
+                    if experience and isinstance(experience, str) and experience.startswith('{'):
+                        try:
+                            experience = json.loads(experience)
+                        except:
+                            experience = None
+                    
+                    if experience and isinstance(experience, dict):
+                        result.append({
+                            'timestamp': row[0],
+                            'level': row[1],
+                            'experience': experience,
+                            'created_at': row[3]
+                        })
+                
+                performance_logger.info(f"获取到 {len(result)} 条可视化数据，等级过滤: {level_filter}, 时间限制: {hours_limit}小时")
+                return result
+                
+        except Exception as e:
+            performance_logger.error(f"获取可视化数据失败: {e}")
+            return []
+    
+    def get_experience_stats_by_time_interval(self, minutes: int = 5) -> List[Dict[str, Any]]:
+        """按时间间隔统计经验获取"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 获取最近24小时内的经验数据
+                cursor.execute('''
+                    SELECT level, experience, created_at
+                    FROM game_data
+                    WHERE created_at >= datetime('now', '-24 hours')
+                    AND experience IS NOT NULL
+                    AND experience != ''
+                    ORDER BY created_at ASC
+                ''')
+                
+                rows = cursor.fetchall()
+                if not rows:
+                    return []
+                
+                # 解析经验数据并按时间间隔分组
+                from datetime import datetime, timedelta
+                import re
+                
+                time_groups = {}
+                
+                for row in rows:
+                    level = row[0]
+                    experience_str = row[1]
+                    created_at_str = row[2]
+                    
+                    # 解析经验数据
+                    experience = None
+                    if experience_str and isinstance(experience_str, str) and experience_str.startswith('{'):
+                        try:
+                            experience = json.loads(experience_str)
+                        except:
+                            continue
+                    
+                    if not experience or not isinstance(experience, dict):
+                        continue
+                    
+                    exp_value = experience.get('value', 0)
+                    if exp_value <= 0:
+                        continue
+                    
+                    # 解析时间
+                    try:
+                        # SQLite的时间格式：YYYY-MM-DD HH:MM:SS
+                        dt = datetime.strptime(created_at_str, '%Y-%m-%d %H:%M:%S')
+                    except:
+                        continue
+                    
+                    # 计算时间分组key（按分钟间隔）
+                    minute_group = (dt.hour * 60 + dt.minute) // minutes
+                    time_key = dt.replace(hour=minute_group * minutes // 60, 
+                                        minute=minute_group * minutes % 60, 
+                                        second=0, microsecond=0)
+                    
+                    if time_key not in time_groups:
+                        time_groups[time_key] = {
+                            'start_time': time_key,
+                            'end_time': time_key + timedelta(minutes=minutes),
+                            'exp_records': [],
+                            'levels': set()
+                        }
+                    
+                    time_groups[time_key]['exp_records'].append(exp_value)
+                    time_groups[time_key]['levels'].add(level)
+                
+                # 计算每个时间段的统计
+                result = []
+                for time_key in sorted(time_groups.keys()):
+                    group = time_groups[time_key]
+                    exp_records = group['exp_records']
+                    
+                    if len(exp_records) >= 2:  # 至少需要2条记录才能计算增长
+                        exp_gain = max(exp_records) - min(exp_records)
+                        # 过滤None值
+                        valid_levels = [level for level in group['levels'] if level is not None]
+                        avg_level = sum(valid_levels) / len(valid_levels) if valid_levels else 0
+                        
+                        result.append({
+                            'start_time': group['start_time'].strftime('%H:%M'),
+                            'end_time': group['end_time'].strftime('%H:%M'),
+                            'duration_minutes': minutes,
+                            'exp_gain': exp_gain,
+                            'avg_level': round(avg_level, 1),
+                            'record_count': len(exp_records)
+                        })
+                
+                performance_logger.info(f"按 {minutes} 分钟间隔统计，获得 {len(result)} 个时间段的数据")
+                return result
+                
+        except Exception as e:
+            performance_logger.error(f"按时间间隔统计经验失败: {e}")
+            return []
     
     def get_statistics(self) -> Dict[str, Any]:
         """获取数据统计信息"""

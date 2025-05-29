@@ -9,6 +9,7 @@ from artalekey.ui.components import HotkeyCard, OCRHotkeyCard
 from artalekey.ui.simple_target_selector import SimpleTargetSelector
 from artalekey.ui.simple_styles import get_adaptive_style, get_native_style
 from artalekey.ui.window_status_widget import WindowStatusWidget
+from artalekey.ui.visualization_widget import VisualizationWidget
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
 from artalekey.core.config import config_manager
 from artalekey.core.logger import performance_logger
@@ -80,6 +81,7 @@ class TabbedMainWindow(QMainWindow):
         # 创建各个标签页
         self._create_quick_up_tab()
         self._create_ocr_tab()
+        self._create_visualization_tab()
         self._create_settings_tab()
         
         # 状态栏
@@ -152,6 +154,19 @@ class TabbedMainWindow(QMainWindow):
         layout.addStretch()
         
         self.tab_widget.addTab(tab_widget, "OCR识别")
+        
+    def _create_visualization_tab(self):
+        """创建可视化标签页"""
+        tab_widget = QWidget()
+        layout = QVBoxLayout(tab_widget)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(15)
+        
+        # 可视化组件
+        self.visualization_widget = VisualizationWidget()
+        layout.addWidget(self.visualization_widget)
+        
+        self.tab_widget.addTab(tab_widget, "可视化")
         
     def _create_settings_tab(self):
         """创建设置标签页"""
@@ -346,9 +361,23 @@ class TabbedMainWindow(QMainWindow):
         
         # 设置OCR快捷键和目标窗口
         ocr_config = self.ocr_card.get_config()
-        self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 's'))
+        self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 'c'))
         self.hotkey_listener.set_target_window_name(ocr_config.get('target_window', 'MapleStory Worlds'))
         
+        # 更新OCR状态显示
+        self._update_ocr_status(ocr_config)
+        
+    def _update_ocr_status(self, ocr_config):
+        """更新OCR状态显示"""
+        if ocr_config.get('enabled', False):
+            trigger_key = ocr_config.get('trigger_key', 'c')
+            target_window = ocr_config.get('target_window', 'MapleStory Worlds')
+            self.ocr_status_label.setText(f"✅ OCR功能已启用 (按 {trigger_key.upper()} 键触发，目标: {target_window})")
+            self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid green; border-radius: 4px;")
+        else:
+            self.ocr_status_label.setText("❌ OCR功能未启用")
+            self.ocr_status_label.setStyleSheet("color: gray; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
+    
     def on_config_changed(self, hotkey_id: str, config: dict):
         """配置变更处理"""
         if hotkey_id == "default":
@@ -429,6 +458,9 @@ class TabbedMainWindow(QMainWindow):
         self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 'c'))
         self.hotkey_listener.set_target_window_name(config.get('target_window', 'MapleStory Worlds'))
         
+        # 更新OCR状态显示
+        self._update_ocr_status(config)
+        
         # 保存配置
         self.save_config()
         
@@ -436,6 +468,8 @@ class TabbedMainWindow(QMainWindow):
         """截屏OCR触发 - 单次触发模式"""
         ocr_config = self.ocr_card.get_config()
         if not ocr_config.get('enabled', False):
+            self.ocr_status_label.setText("❌ OCR功能未启用，无法触发")
+            self.ocr_status_label.setStyleSheet("color: red; font-weight: bold; padding: 8px; border: 1px solid red; border-radius: 4px;")
             return
             
         # 调用单次OCR触发
@@ -450,6 +484,10 @@ class TabbedMainWindow(QMainWindow):
         """游戏数据提取完成"""
         # 刷新窗口状态组件的数据显示
         self.window_status_widget.refresh_data()
+        
+        # 刷新可视化组件
+        if hasattr(self, 'visualization_widget'):
+            self.visualization_widget.refresh_data()
         
         # 更新状态栏
         level = game_data.get('level', '未知')
@@ -476,10 +514,22 @@ class TabbedMainWindow(QMainWindow):
         status_msg = f"OCR识别完成 - 等级: {level}, 经验: {exp_text}, 金钱: {money_text}"
         self.statusBar().showMessage(status_msg)
         
+        # 恢复OCR状态显示
+        ocr_config = self.ocr_card.get_config()
+        if level != '未知' or (experience and experience != '未知'):
+            # 识别成功
+            self.ocr_status_label.setText(f"✅ OCR识别成功 - 等级: {level}, 经验: {exp_text}")
+            self.ocr_status_label.setStyleSheet("color: green; font-weight: bold; padding: 8px; border: 1px solid green; border-radius: 4px;")
+        else:
+            # 识别失败
+            self.ocr_status_label.setText("⚠️ OCR识别完成，但未提取到有效数据")
+            self.ocr_status_label.setStyleSheet("color: orange; font-weight: bold; padding: 8px; border: 1px solid orange; border-radius: 4px;")
+        
     def on_ocr_error(self, error_message):
         """OCR错误"""
-        self.ocr_status_label.setText(f"OCR错误: {error_message}")
-        self.ocr_status_label.setStyleSheet("color: red; font-weight: bold; padding: 8px; border: 1px solid lightgray; border-radius: 4px;")
+        self.ocr_status_label.setText(f"❌ OCR错误: {error_message}")
+        self.ocr_status_label.setStyleSheet("color: red; font-weight: bold; padding: 8px; border: 1px solid red; border-radius: 4px;")
+        self.statusBar().showMessage(f"OCR处理失败: {error_message}")
         
     def on_activate_window_requested(self):
         """激活窗口请求"""

@@ -3,6 +3,8 @@ from PyQt6.QtWidgets import (
 )
 from PyQt6.QtCore import Qt, pyqtSignal
 from PyQt6.QtGui import QFont
+from datetime import datetime
+import pytz
 from artalekey.core.window_status import window_status_monitor
 from artalekey.core.database import game_db
 
@@ -14,6 +16,8 @@ class WindowStatusWidget(QWidget):
     
     def __init__(self, parent=None):
         super().__init__(parent)
+        # 设置北京时区
+        self.beijing_tz = pytz.timezone('Asia/Shanghai')
         self._init_ui()
         self._connect_signals()
         
@@ -159,7 +163,7 @@ class WindowStatusWidget(QWidget):
                 data_text = f"""等级: {level}
 经验: {exp_text}
 金钱: {money_text}
-更新时间: {created_at}"""
+更新时间: {self._convert_utc_to_beijing(created_at)}"""
                 
                 self.game_data_label.setText(data_text)
             else:
@@ -191,4 +195,23 @@ class WindowStatusWidget(QWidget):
     def closeEvent(self, event):
         """关闭事件"""
         window_status_monitor.stop_monitoring()
-        super().closeEvent(event) 
+        super().closeEvent(event)
+    
+    def _convert_utc_to_beijing(self, utc_time_str: str) -> str:
+        """将UTC时间字符串转换为北京时间字符串"""
+        try:
+            # 解析UTC时间
+            utc_dt = datetime.strptime(utc_time_str, '%Y-%m-%d %H:%M:%S')
+            
+            # 添加UTC时区信息
+            utc_tz = pytz.timezone('UTC')
+            utc_dt = utc_tz.localize(utc_dt)
+            
+            # 转换为北京时间
+            beijing_dt = utc_dt.astimezone(self.beijing_tz)
+            
+            # 返回格式化的北京时间
+            return beijing_dt.strftime('%Y-%m-%d %H:%M:%S')
+        except Exception as e:
+            # 如果转换失败，返回原始时间
+            return utc_time_str 

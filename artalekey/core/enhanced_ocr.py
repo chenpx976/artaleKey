@@ -43,11 +43,6 @@ class EnhancedOCRManager(QThread):
         self._bounds_cache_time = 0
         self._bounds_cache_duration = 5.0  # 窗口边界缓存5秒
         
-        # 历史数据缓存 - 用于辅助决策
-        self._recent_levels = []  # 最近的等级数据
-        self._recent_experiences = []  # 最近的经验数据
-        self._history_limit = 10  # 保持最近10条记录
-        
         self._setup_output_folder()
         
         # 确保OCR引擎已加载
@@ -108,7 +103,7 @@ class EnhancedOCRManager(QThread):
         return str(hash(image_array.tobytes()))
     
     def _preprocess_image_parallel(self, image: Image.Image) -> List[Tuple[str, np.ndarray]]:
-        """并行处理图像预处理 - 所有方法都基于原始图片"""
+        """并行处理图像预处理 - 根据配置决定使用哪些预处理方法"""
         # 转换为RGB模式的原始图片
         if image.mode == 'RGBA':
             background = Image.new('RGB', image.size, (255, 255, 255))
@@ -124,16 +119,32 @@ class EnhancedOCRManager(QThread):
         
         processed_results = []
         
-        # 定义所有预处理任务
-        preprocessing_tasks = [
-            ('standard', self._standard_preprocessing, original_image),
-            ('orange_optimized', self._process_orange_background_text, original_array.copy()),
-            ('high_contrast', self._high_contrast_processing, original_array.copy()),
-            ('color_separated', self._color_separation_processing, original_array.copy()),
-        ]
+        # 获取预处理配置
+        preprocessing_config = self._config.get('preprocessing', {})
+        
+        # 定义所有预处理任务 - 默认只启用orange_optimized
+        preprocessing_tasks = []
+        
+        # 橙色背景优化处理 - 默认启用
+        if preprocessing_config.get('orange_optimized', True):
+            preprocessing_tasks.append(('orange_optimized', self._process_orange_background_text, original_array.copy()))
+        
+        # 其他预处理方法 - 需要配置启用
+        if preprocessing_config.get('standard', False):
+            preprocessing_tasks.append(('standard', self._standard_preprocessing, original_image))
+        
+        if preprocessing_config.get('high_contrast', False):
+            preprocessing_tasks.append(('high_contrast', self._high_contrast_processing, original_array.copy()))
+        
+        if preprocessing_config.get('color_separated', False):
+            preprocessing_tasks.append(('color_separated', self._color_separation_processing, original_array.copy()))
+        
+        # 如果没有启用任何预处理方法，至少使用orange_optimized
+        if not preprocessing_tasks:
+            preprocessing_tasks.append(('orange_optimized', self._process_orange_background_text, original_array.copy()))
         
         # 使用线程池并行处理
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=min(4, len(preprocessing_tasks))) as executor:
             # 提交所有任务
             future_to_method = {}
             for method_name, method_func, input_data in preprocessing_tasks:
@@ -146,15 +157,15 @@ class EnhancedOCRManager(QThread):
                 try:
                     result = future.result()
                     processed_results.append((method_name, result))
-                    performance_logger.debug(f"并行预处理完成: {method_name}")
+                    performance_logger.debug(f"预处理完成: {method_name}")
                 except Exception as e:
                     performance_logger.error(f"预处理方法 {method_name} 失败: {e}")
         
         # 按原始顺序排序结果
-        method_order = ['standard', 'orange_optimized', 'high_contrast', 'color_separated']
+        method_order = ['orange_optimized', 'standard', 'high_contrast', 'color_separated']
         processed_results.sort(key=lambda x: method_order.index(x[0]) if x[0] in method_order else 999)
         
-        performance_logger.info(f"并行图像预处理完成，生成了 {len(processed_results)} 种处理版本")
+        performance_logger.info(f"图像预处理完成，生成了 {len(processed_results)} 种处理版本")
         return processed_results
     
     def _standard_preprocessing(self, image: Image.Image) -> np.ndarray:
@@ -368,7 +379,7 @@ class EnhancedOCRManager(QThread):
             return None
     
     def _perform_ocr_parallel(self, image: Image.Image) -> Dict[str, Any]:
-        """并行执行多引擎OCR识别"""
+        """并行执行多引擎OCR识别 - 根据配置决定使用的引擎"""
         results = {
             'individual_results': [],  # 每个OCR结果单独存储
             'processing_summary': {}   # 处理摘要
@@ -380,17 +391,24 @@ class EnhancedOCRManager(QThread):
             
             all_individual_results = []
             
+            # 获取OCR引擎配置
+            ocr_engines_config = self._config.get('ocr_engines', {})
+            enable_easyocr = ocr_engines_config.get('easyocr', True)
+            enable_tesseract = ocr_engines_config.get('tesseract', False)
+            
             # 对每种预处理版本并行进行OCR
-            with ThreadPoolExecutor(max_workers=8) as executor:  # 4个预处理 * 2个OCR引擎
+            max_workers = len(processed_versions) * (int(enable_easyocr) + int(enable_tesseract and self._tesseract_available))
+            with ThreadPoolExecutor(max_workers=max(1, max_workers)) as executor:
                 future_to_task = {}
                 
                 for version_name, processed_image in processed_versions:
                     # EasyOCR任务
-                    future_easy = executor.submit(self._run_easyocr, processed_image, version_name)
-                    future_to_task[future_easy] = f'easyocr_{version_name}'
+                    if enable_easyocr:
+                        future_easy = executor.submit(self._run_easyocr, processed_image, version_name)
+                        future_to_task[future_easy] = f'easyocr_{version_name}'
                     
-                    # Tesseract任务（如果可用）
-                    if self._tesseract_available:
+                    # Tesseract任务（如果可用且启用）
+                    if enable_tesseract and self._tesseract_available:
                         future_tess = executor.submit(self._run_tesseract, processed_image, version_name)
                         future_to_task[future_tess] = f'tesseract_{version_name}'
                 
@@ -409,13 +427,13 @@ class EnhancedOCRManager(QThread):
             results['processing_summary'] = {
                 'total_texts': len(all_individual_results),
                 'preprocessing_methods': len(processed_versions),
-                'ocr_engines': 2 if self._tesseract_available else 1
+                'ocr_engines': int(enable_easyocr) + int(enable_tesseract and self._tesseract_available)
             }
             
-            performance_logger.info(f"并行OCR识别完成，共获得 {len(all_individual_results)} 个文本结果")
+            performance_logger.info(f"OCR识别完成，共获得 {len(all_individual_results)} 个文本结果")
             
         except Exception as e:
-            performance_logger.error(f"并行OCR识别失败: {e}")
+            performance_logger.error(f"OCR识别失败: {e}")
         
         return results
     
@@ -485,7 +503,7 @@ class EnhancedOCRManager(QThread):
             return []
     
     def _extract_game_data_individual(self, ocr_results: Dict[str, Any]) -> Dict[str, Any]:
-        """从OCR结果中单独提取游戏数据，然后进行合理性分析"""
+        """从OCR结果中提取游戏数据 - 移除历史数据依赖"""
         game_data = {
             'level': None,
             'experience': None,
@@ -497,7 +515,7 @@ class EnhancedOCRManager(QThread):
         
         try:
             individual_results = ocr_results.get('individual_results', [])
-            performance_logger.info(f"开始单独数据提取，共 {len(individual_results)} 个OCR结果")
+            performance_logger.info(f"开始数据提取，共 {len(individual_results)} 个OCR结果")
             
             # 步骤1: 从每个OCR结果中单独提取数据
             candidates = []
@@ -513,8 +531,8 @@ class EnhancedOCRManager(QThread):
             for candidate in candidates:
                 self._analyze_candidate_reasonableness(candidate)
             
-            # 步骤3: 结合历史数据选择最佳结果
-            combined_result = self._select_best_candidate_with_history(candidates)
+            # 步骤3: 选择最佳结果（不依赖历史数据）
+            combined_result = self._select_best_candidate(candidates)
             
             if combined_result:
                 game_data['level'] = combined_result.get('level')
@@ -530,9 +548,6 @@ class EnhancedOCRManager(QThread):
                     'experience_score': selection_details.get('experience_score', 0)
                 }
                 
-                # 更新历史记录
-                self._update_history(combined_result)
-                
                 performance_logger.info(f"最终选择结果: Level={game_data['level']}, Exp={game_data['experience']}")
                 level_info = f"等级来源: {selection_details.get('level_source', 'None')}, 评分: {selection_details.get('level_score', 0):.1f}"
                 exp_info = f"经验来源: {selection_details.get('experience_source', 'None')}, 评分: {selection_details.get('experience_score', 0):.1f}"
@@ -542,7 +557,7 @@ class EnhancedOCRManager(QThread):
                 performance_logger.warning("没有找到合适的候选结果")
             
         except Exception as e:
-            performance_logger.error(f"单独数据提取失败: {e}")
+            performance_logger.error(f"数据提取失败: {e}")
         
         return game_data
     
@@ -640,46 +655,31 @@ class EnhancedOCRManager(QThread):
         return None
     
     def _analyze_candidate_reasonableness(self, candidate: Dict[str, Any]):
-        """分析候选结果的合理性"""
+        """分析候选结果的合理性 - 移除历史数据依赖"""
         score = 0
         
-        # 基础置信度评分 (0-30分)
+        # 基础置信度评分 (0-40分)
         confidence = candidate.get('confidence', 0)
-        score += min(confidence * 30, 30)
+        score += min(confidence * 40, 40)
         
-        # 等级合理性评分 (0-25分)
+        # 等级合理性评分 (0-30分)
         level = candidate.get('level')
         if level is not None:
             if 1 <= level <= 300:
-                score += 20
-                # 与历史数据的一致性
-                if self._recent_levels:
-                    recent_avg = sum(self._recent_levels) / len(self._recent_levels)
-                    level_diff = abs(level - recent_avg)
-                    if level_diff <= 2:  # 等级变化在2级以内
-                        score += 5
-                    elif level_diff <= 5:  # 等级变化在5级以内
-                        score += 2
+                score += 30
             else:
-                score -= 20  # 不合理的等级扣分
+                score -= 30  # 不合理的等级扣分
         
-        # 经验值合理性评分 (0-25分)
+        # 经验值合理性评分 (0-30分)
         experience = candidate.get('experience')
         if experience is not None:
             exp_value = experience.get('value', 0)
             exp_percentage = experience.get('percentage', 0)
             
             if 0 < exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
-                score += 20
-                # 与历史数据的一致性
-                if self._recent_experiences:
-                    recent_exp = self._recent_experiences[-1] if self._recent_experiences else None
-                    if recent_exp:
-                        # 经验值应该只增不减（除非升级）
-                        if exp_value >= recent_exp.get('value', 0):
-                            score += 5
+                score += 30
             else:
-                score -= 20  # 不合理的经验值扣分
+                score -= 30  # 不合理的经验值扣分
         
         # 来源可靠性评分 (0-20分)
         source = candidate.get('source', '')
@@ -704,8 +704,8 @@ class EnhancedOCRManager(QThread):
         candidate['reasonableness_score'] = score
         performance_logger.debug(f"候选结果评分: {score}, 文本: '{candidate['text']}', 来源: {source}")
     
-    def _select_best_candidate_with_history(self, candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """结合历史数据选择最佳候选结果"""
+    def _select_best_candidate(self, candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """选择最佳候选结果 - 不依赖历史数据"""
         if not candidates:
             return None
         
@@ -748,38 +748,21 @@ class EnhancedOCRManager(QThread):
             }
         }
         
-        # 额外的历史一致性检查
+        # 额外的质量检查
         level = combined_result.get('level')
         experience = combined_result.get('experience')
         
         if level is not None and best_level_candidate.get('reasonableness_score', 0) < 50:
-            performance_logger.warning(f"等级候选评分较低: {best_level_candidate.get('reasonableness_score'):.1f}, 需要谨慎处理")
+            performance_logger.warning(f"等级候选评分较低: {best_level_candidate.get('reasonableness_score'):.1f}")
         
         if experience is not None and best_exp_candidate.get('reasonableness_score', 0) < 50:
-            performance_logger.warning(f"经验值候选评分较低: {best_exp_candidate.get('reasonableness_score'):.1f}, 需要谨慎处理")
+            performance_logger.warning(f"经验值候选评分较低: {best_exp_candidate.get('reasonableness_score'):.1f}")
         
         performance_logger.info(f"=== 最终选择结果 ===")
         performance_logger.info(f"等级: {level} (来源: {combined_result['selection_details']['level_source']}, 评分: {combined_result['selection_details']['level_score']:.1f})")
         performance_logger.info(f"经验: {experience} (来源: {combined_result['selection_details']['experience_source']}, 评分: {combined_result['selection_details']['experience_score']:.1f})")
         
         return combined_result
-    
-    def _update_history(self, selected_result: Dict[str, Any]):
-        """更新历史记录"""
-        level = selected_result.get('level')
-        experience = selected_result.get('experience')
-        
-        if level is not None:
-            self._recent_levels.append(level)
-            if len(self._recent_levels) > self._history_limit:
-                self._recent_levels.pop(0)
-        
-        if experience is not None:
-            self._recent_experiences.append(experience)
-            if len(self._recent_experiences) > self._history_limit:
-                self._recent_experiences.pop(0)
-        
-        performance_logger.debug(f"历史记录已更新: 等级={self._recent_levels}, 经验数量={len(self._recent_experiences)}")
     
     def _save_ocr_result(self, game_data: Dict[str, Any], timestamp: str) -> str:
         """保存OCR结果到文件"""
@@ -1086,6 +1069,12 @@ class EnhancedOCRManager(QThread):
             game_data['timestamp'] = timestamp
             game_data['screenshot_path'] = screenshot_path
             
+            # 检查是否有有效数据
+            if game_data.get('level') is None and game_data.get('experience') is None:
+                performance_logger.warning("未提取到有效的等级或经验数据，不保存到数据库")
+                self.error_occurred.emit("未识别到有效的等级或经验数据")
+                return
+            
             # 缓存OCR结果
             self._last_ocr_result = game_data.copy()
             
@@ -1106,7 +1095,7 @@ class EnhancedOCRManager(QThread):
             # 保存OCR结果
             ocr_result_path = self._save_ocr_result(game_data, timestamp)
             
-            # 保存到数据库
+            # 保存到数据库（只有在有有效数据时）
             try:
                 game_db.insert_game_data(game_data)
                 performance_logger.info("游戏数据已保存到数据库")
