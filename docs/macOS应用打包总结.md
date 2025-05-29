@@ -12,13 +12,12 @@
 
 ### 文档和指南
 - `docs/macOS打包指南.md` - 详细打包说明
-- `quick_build_test.py` - 流程演示脚本
-- `MACOS_BUILD_SUMMARY.md` - 本文件
+- `docs/macOS应用打包总结.md` - 本文件
+- `docs/DMG_制作指南.md` - DMG制作指南
 
 ### 生成的文件（打包后）
 - `dist/ArtaleKey.app` - 最终的macOS应用
 - `assets/` - 图标和资源目录
-- `DMG_GUIDE.md` - DMG制作指南
 
 ## 🚀 快速开始
 

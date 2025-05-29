@@ -9,11 +9,6 @@ MacOS 游戏快捷键辅助工具，专为 MapleStory Worlds 等游戏优化。
 python -m artalekey
 ```
 
-### 备选启动方式
-```bash
-python run_artalekey.py
-```
-
 ## ⚙️ 快速设置
 
 1. **启用快速向上功能** ✓
@@ -31,16 +26,14 @@ artalekey/
 │   └── __main__.py         # 主入口
 ├── docs/                   # 文档
 │   ├── 启动说明.md
-│   ├── UI_IMPROVEMENT_COMPARISON.md
+│   ├── macOS打包指南.md
+│   ├── macOS应用打包总结.md
+│   ├── DMG_制作指南.md
 │   └── ...
 ├── tests/                  # 测试脚本
-│   ├── simple_native_ui_test.py
 │   ├── test_performance.py
-│   └── ...
+│   └── test_window_detection.py
 ├── scripts/                # 实用脚本
-│   ├── simple_ui_summary.py
-│   └── ...
-├── run_artalekey.py        # 简洁启动脚本
 ├── requirements.txt        # 依赖
 └── README.md              # 本文件
 ```
@@ -49,32 +42,20 @@ artalekey/
 
 详细文档请查看 `docs/` 目录：
 - **[macOS打包指南](docs/macOS打包指南.md)** - 完整的App打包说明
+- **[macOS应用打包总结](docs/macOS应用打包总结.md)** - 打包方案总结
 - **[项目结构整理说明](docs/项目结构整理说明.md)** - 项目结构说明
 - **[性能优化报告](docs/PERFORMANCE_OPTIMIZATION_REPORT.md)** - 性能优化详情
+- **[DMG制作指南](docs/DMG_制作指南.md)** - DMG安装包制作指南
 
 ## 🧪 测试
 
 测试脚本位于 `tests/` 目录：
 ```bash
-# UI测试
-python tests/simple_native_ui_test.py
-
 # 性能测试  
 python tests/test_performance.py
 
 # 窗口检测测试
 python tests/test_window_detection.py
-```
-
-## 🔧 开发
-
-实用脚本位于 `scripts/` 目录：
-```bash
-# UI改进总结
-python scripts/simple_ui_summary.py
-
-# 修复验证
-python scripts/apply_ui_fixes.py
 ```
 
 ## 📦 打包为macOS App
@@ -93,8 +74,8 @@ python build_macos_app.py
 
 ### 详细说明
 - **[macOS打包指南](docs/macOS打包指南.md)** - 完整的打包教程
-- **[MACOS_BUILD_SUMMARY.md](MACOS_BUILD_SUMMARY.md)** - 打包方案总结
-- **[APP_FIX_SOLUTION.md](APP_FIX_SOLUTION.md)** - App启动问题解决方案
+- **[macOS应用打包总结](docs/macOS应用打包总结.md)** - 打包方案总结
+- **[DMG制作指南](docs/DMG_制作指南.md)** - DMG安装包制作指南
 
 包括：
 - 🎨 自定义应用图标
