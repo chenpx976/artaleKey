@@ -45,8 +45,9 @@ class ConfigManager(QObject):
                 'trigger_key': 'c',
                 'target_window': 'MapleStory Worlds',
                 'output_folder': 'ocr_data',
-                'save_screenshots': True,
-                'capture_window_only': True  # 只截取目标窗口内容
+                'save_screenshots': False,
+                'capture_window_only': True,  # 只截取目标窗口内容
+                'screenshot_scale': 2.0       # 截图缩放倍数，2.0表示2x分辨率
             }
         }
         

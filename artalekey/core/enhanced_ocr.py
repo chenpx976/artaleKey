@@ -4,8 +4,9 @@ import json
 import re
 from datetime import datetime
 from typing import Optional, Dict, Any, List, Tuple
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from PyQt6.QtCore import QThread, pyqtSignal, QTimer
-from PIL import Image, ImageGrab
+from PIL import Image, ImageGrab, ImageEnhance, ImageFilter
 import cv2
 import numpy as np
 from artalekey.core.logger import performance_logger
@@ -14,7 +15,7 @@ from artalekey.core.window_detector import WindowDetector
 from artalekey.core.database import game_db
 
 class EnhancedOCRManager(QThread):
-    """增强的OCR管理器 - 使用EasyOCR，支持单次触发模式"""
+    """增强的OCR管理器 - 使用多种OCR引擎，专门优化橙色背景白色文字识别"""
     
     # 信号定义
     ocr_triggered = pyqtSignal()       # OCR触发信号
@@ -32,6 +33,9 @@ class EnhancedOCRManager(QThread):
         self._ocr_engine_loaded = False
         self._engine_loading = False
         
+        # Tesseract支持
+        self._tesseract_available = False
+        
         # 性能优化缓存
         self._last_screenshot_hash = None
         self._last_ocr_result = None
@@ -39,14 +43,15 @@ class EnhancedOCRManager(QThread):
         self._bounds_cache_time = 0
         self._bounds_cache_duration = 5.0  # 窗口边界缓存5秒
         
-        # 图像预处理缓存
-        self._preprocessed_cache = {}
-        self._cache_max_size = 3
+        # 历史数据缓存 - 用于辅助决策
+        self._recent_levels = []  # 最近的等级数据
+        self._recent_experiences = []  # 最近的经验数据
+        self._history_limit = 10  # 保持最近10条记录
         
         self._setup_output_folder()
         
         # 确保OCR引擎已加载
-        self._load_ocr_engine()
+        self._load_ocr_engines()
         
     def _setup_output_folder(self):
         """设置输出文件夹"""
@@ -61,26 +66,36 @@ class EnhancedOCRManager(QThread):
         
         performance_logger.info(f"OCR输出文件夹设置为: {self._output_folder}")
     
-    def _load_ocr_engine(self):
-        """延迟加载EasyOCR引擎 - 避免启动时阻塞"""
+    def _load_ocr_engines(self):
+        """加载所有可用的OCR引擎"""
         if self._ocr_engine_loaded or self._engine_loading:
             return
             
         self._engine_loading = True
         try:
-            performance_logger.info("开始加载EasyOCR引擎...")
+            # 加载EasyOCR
+            performance_logger.info("开始加载OCR引擎...")
             start_time = time.time()
             
             import easyocr
-            # 优化：只加载必要的语言，禁用GPU以提高兼容性
-            self._easyocr_reader = easyocr.Reader(['en', 'ch_sim'], gpu=False, verbose=False)
+            # 优化：只加载英文，禁用GPU以提高兼容性
+            self._easyocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
+            
+            # 尝试加载Tesseract
+            try:
+                import pytesseract
+                self._tesseract_available = True
+                performance_logger.info("Tesseract OCR引擎可用")
+            except ImportError:
+                performance_logger.warning("Tesseract OCR引擎不可用，将只使用EasyOCR")
+                self._tesseract_available = False
             
             load_time = time.time() - start_time
             self._ocr_engine_loaded = True
-            performance_logger.info(f"EasyOCR引擎加载成功，耗时: {load_time:.2f}秒")
+            performance_logger.info(f"OCR引擎加载成功，耗时: {load_time:.2f}秒")
             
         except Exception as e:
-            performance_logger.error(f"EasyOCR引擎加载失败: {e}")
+            performance_logger.error(f"OCR引擎加载失败: {e}")
             self._ocr_engine_loaded = False
         finally:
             self._engine_loading = False
@@ -92,45 +107,168 @@ class EnhancedOCRManager(QThread):
         image_array = np.array(small_image)
         return str(hash(image_array.tobytes()))
     
-    def _preprocess_image(self, image: Image.Image) -> np.ndarray:
-        """预处理图像以提高OCR准确性"""
-        image_hash = self._get_image_hash(image)
-        
-        # 检查缓存
-        if image_hash in self._preprocessed_cache:
-            performance_logger.debug("使用预处理图像缓存")
-            return self._preprocessed_cache[image_hash]
+    def _preprocess_image_parallel(self, image: Image.Image) -> List[Tuple[str, np.ndarray]]:
+        """并行处理图像预处理 - 所有方法都基于原始图片"""
+        # 转换为RGB模式的原始图片
+        if image.mode == 'RGBA':
+            background = Image.new('RGB', image.size, (255, 255, 255))
+            background.paste(image, mask=image.split()[-1])
+            original_image = background
+        elif image.mode != 'RGB':
+            original_image = image.convert('RGB')
+        else:
+            original_image = image.copy()
         
         # 转换为numpy数组
-        img_array = np.array(image)
+        original_array = np.array(original_image)
         
-        # 图像预处理优化
-        # 1. 转换为灰度图（提高OCR速度）
-        if len(img_array.shape) == 3:
-            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        else:
-            gray = img_array
+        processed_results = []
+        
+        # 定义所有预处理任务
+        preprocessing_tasks = [
+            ('standard', self._standard_preprocessing, original_image),
+            ('orange_optimized', self._process_orange_background_text, original_array.copy()),
+            ('high_contrast', self._high_contrast_processing, original_array.copy()),
+            ('color_separated', self._color_separation_processing, original_array.copy()),
+        ]
+        
+        # 使用线程池并行处理
+        with ThreadPoolExecutor(max_workers=4) as executor:
+            # 提交所有任务
+            future_to_method = {}
+            for method_name, method_func, input_data in preprocessing_tasks:
+                future = executor.submit(method_func, input_data)
+                future_to_method[future] = method_name
             
-        # 2. 自适应阈值处理（提高文字识别率）
-        processed = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
-        )
+            # 收集结果
+            for future in as_completed(future_to_method):
+                method_name = future_to_method[future]
+                try:
+                    result = future.result()
+                    processed_results.append((method_name, result))
+                    performance_logger.debug(f"并行预处理完成: {method_name}")
+                except Exception as e:
+                    performance_logger.error(f"预处理方法 {method_name} 失败: {e}")
         
-        # 3. 轻微的形态学操作（去噪）
-        kernel = np.ones((2, 2), np.uint8)
-        processed = cv2.morphologyEx(processed, cv2.MORPH_CLOSE, kernel)
+        # 按原始顺序排序结果
+        method_order = ['standard', 'orange_optimized', 'high_contrast', 'color_separated']
+        processed_results.sort(key=lambda x: method_order.index(x[0]) if x[0] in method_order else 999)
         
-        # 转换回RGB格式供EasyOCR使用
-        processed_rgb = cv2.cvtColor(processed, cv2.COLOR_GRAY2RGB)
+        performance_logger.info(f"并行图像预处理完成，生成了 {len(processed_results)} 种处理版本")
+        return processed_results
+    
+    def _standard_preprocessing(self, image: Image.Image) -> np.ndarray:
+        """标准预处理方法"""
+        enhancer = ImageEnhance.Contrast(image)
+        image = enhancer.enhance(1.15)
         
-        # 缓存管理
-        if len(self._preprocessed_cache) >= self._cache_max_size:
-            # 移除最旧的缓存项
-            oldest_key = next(iter(self._preprocessed_cache))
-            del self._preprocessed_cache[oldest_key]
+        enhancer = ImageEnhance.Color(image)
+        image = enhancer.enhance(1.1)
         
-        self._preprocessed_cache[image_hash] = processed_rgb
-        return processed_rgb
+        enhancer = ImageEnhance.Sharpness(image)
+        image = enhancer.enhance(1.05)
+        
+        return np.array(image)
+    
+    def _process_orange_background_text(self, img_array: np.ndarray) -> np.ndarray:
+        """专门处理橙色背景白色文字"""
+        try:
+            # 转换到HSV颜色空间，更容易分离橙色
+            hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+            
+            # 定义橙色的HSV范围 (橙色在HSV中的色调范围大约是10-25)
+            lower_orange = np.array([5, 100, 100])   # 更宽泛的橙色范围
+            upper_orange = np.array([35, 255, 255])
+            
+            # 创建橙色区域的掩码
+            orange_mask = cv2.inRange(hsv, lower_orange, upper_orange)
+            
+            # 形态学操作来清理掩码
+            kernel = np.ones((3,3), np.uint8)
+            orange_mask = cv2.morphologyEx(orange_mask, cv2.MORPH_CLOSE, kernel)
+            orange_mask = cv2.morphologyEx(orange_mask, cv2.MORPH_OPEN, kernel)
+            
+            # 创建输出图像
+            result = img_array.copy()
+            
+            # 在橙色区域内，增强白色文字的对比度
+            orange_regions = img_array[orange_mask > 0]
+            if len(orange_regions) > 0:
+                # 转换为灰度来分析亮度
+                gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+                
+                # 在橙色区域内找到白色文字（高亮度像素）
+                white_threshold = 200  # 白色文字的亮度阈值
+                white_text_mask = (gray > white_threshold) & (orange_mask > 0)
+                
+                # 增强白色文字区域
+                result[white_text_mask] = [255, 255, 255]  # 纯白色
+                
+                # 将橙色背景调暗，增加对比度
+                orange_bg_mask = (gray <= white_threshold) & (orange_mask > 0)
+                result[orange_bg_mask] = result[orange_bg_mask] * 0.3  # 调暗背景
+            
+            performance_logger.debug("橙色背景白色文字专用处理完成")
+            return result
+            
+        except Exception as e:
+            performance_logger.error(f"橙色背景处理失败: {e}")
+            return img_array
+    
+    def _high_contrast_processing(self, img_array: np.ndarray) -> np.ndarray:
+        """高对比度处理"""
+        try:
+            # 转换为灰度
+            gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+            
+            # 自适应直方图均衡化
+            clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8,8))
+            enhanced = clahe.apply(gray)
+            
+            # 应用双边滤波减少噪声但保持边缘
+            filtered = cv2.bilateralFilter(enhanced, 9, 75, 75)
+            
+            # 锐化
+            kernel = np.array([[-1,-1,-1], [-1,9,-1], [-1,-1,-1]])
+            sharpened = cv2.filter2D(filtered, -1, kernel)
+            
+            # 转换回RGB
+            result = cv2.cvtColor(sharpened, cv2.COLOR_GRAY2RGB)
+            
+            performance_logger.debug("高对比度处理完成")
+            return result
+            
+        except Exception as e:
+            performance_logger.error(f"高对比度处理失败: {e}")
+            return img_array
+    
+    def _color_separation_processing(self, img_array: np.ndarray) -> np.ndarray:
+        """颜色分离处理 - 专门提取白色文字"""
+        try:
+            # 转换为HSV
+            hsv = cv2.cvtColor(img_array, cv2.COLOR_RGB2HSV)
+            
+            # 定义白色的HSV范围
+            lower_white = np.array([0, 0, 200])     # 高亮度，低饱和度
+            upper_white = np.array([180, 30, 255])  # 任何色调，低饱和度，高亮度
+            
+            # 创建白色文字掩码
+            white_mask = cv2.inRange(hsv, lower_white, upper_white)
+            
+            # 形态学操作清理掩码
+            kernel = np.ones((2,2), np.uint8)
+            white_mask = cv2.morphologyEx(white_mask, cv2.MORPH_CLOSE, kernel)
+            
+            # 创建二值图像：白色文字为白色，其他为黑色
+            result = np.zeros_like(img_array)
+            result[white_mask > 0] = [255, 255, 255]
+            
+            performance_logger.debug("颜色分离处理完成")
+            return result
+            
+        except Exception as e:
+            performance_logger.error(f"颜色分离处理失败: {e}")
+            return img_array
     
     def _is_target_window_active(self) -> bool:
         """检查目标窗口是否激活"""
@@ -198,484 +336,450 @@ class EnhancedOCRManager(QThread):
         return None
     
     def _capture_window_screenshot(self, bounds: Dict) -> Optional[Image.Image]:
-        """截取指定窗口区域的截图"""
+        """截取指定窗口区域的截图 - 只截取下面四分之一区域"""
         try:
-            # 截取指定区域
+            # 获取原始窗口边界
             x, y, width, height = bounds['x'], bounds['y'], bounds['width'], bounds['height']
             
-            # 使用PIL截取指定区域
-            screenshot = ImageGrab.grab(bbox=(x, y, x + width, y + height))
+            # 计算下面四分之一区域的坐标
+            quarter_height = height // 4
+            new_y = y + height - quarter_height  # 从窗口底部往上四分之一处开始
+            new_height = quarter_height
             
-            performance_logger.info(f"成功截取窗口区域: {x},{y},{width},{height}")
+            performance_logger.info(f"原始窗口区域: {x},{y},{width},{height}")
+            performance_logger.info(f"截取下面四分之一区域: {x},{new_y},{width},{new_height}")
+            
+            # 使用PIL截取指定区域，支持Retina显示器的高分辨率
+            screenshot = ImageGrab.grab(bbox=(x, new_y, x + width, new_y + new_height), all_screens=True)
+            
+            # 如果需要提高分辨率，可以通过缩放实现
+            scale_factor = self._config.get('screenshot_scale', 2.0)  # 默认2x分辨率
+            if scale_factor != 1.0:
+                new_width = int(screenshot.width * scale_factor)
+                new_height_scaled = int(screenshot.height * scale_factor)
+                screenshot = screenshot.resize((new_width, new_height_scaled), Image.Resampling.LANCZOS)
+                performance_logger.info(f"截图已缩放到 {scale_factor}x 分辨率: {new_width}x{new_height_scaled}")
+            
+            performance_logger.info(f"成功截取窗口下面四分之一区域，最终尺寸: {screenshot.width}x{screenshot.height}")
             return screenshot
             
         except Exception as e:
             performance_logger.error(f"截取窗口截图失败: {e}")
             return None
     
-    def _perform_ocr(self, image: Image.Image) -> Dict[str, Any]:
-        """执行EasyOCR识别"""
+    def _perform_ocr_parallel(self, image: Image.Image) -> Dict[str, Any]:
+        """并行执行多引擎OCR识别"""
         results = {
-            'easyocr_results': [],
-            'combined_text': '',
-            'text_boxes': []
+            'individual_results': [],  # 每个OCR结果单独存储
+            'processing_summary': {}   # 处理摘要
         }
         
         try:
-            # 转换为RGB格式（EasyOCR需要RGB）
-            rgb_image = np.array(image)
+            # 并行获取多种预处理版本
+            processed_versions = self._preprocess_image_parallel(image)
             
-            # 使用EasyOCR进行全图识别
-            easyocr_results = self._easyocr_reader.readtext(rgb_image)
+            all_individual_results = []
             
-            # 调试信息：记录所有识别到的文本
-            performance_logger.debug(f"EasyOCR原始识别结果: {len(easyocr_results)} 个文本")
-            for i, (bbox, text, confidence) in enumerate(easyocr_results):
-                performance_logger.debug(f"  文本{i+1}: '{text}' (置信度: {confidence:.3f})")
-            
-            accepted_texts = []
-            filtered_texts = []
-            
-            for (bbox, text, confidence) in easyocr_results:
-                # 进一步降低置信度要求，特别是对游戏相关文本
-                text_stripped = text.strip()
-                is_relevant = self._is_game_relevant_text(text_stripped)
+            # 对每种预处理版本并行进行OCR
+            with ThreadPoolExecutor(max_workers=8) as executor:  # 4个预处理 * 2个OCR引擎
+                future_to_task = {}
                 
-                # 对游戏相关文本使用更低的置信度阈值
-                min_confidence = 0.05 if is_relevant else 0.3
+                for version_name, processed_image in processed_versions:
+                    # EasyOCR任务
+                    future_easy = executor.submit(self._run_easyocr, processed_image, version_name)
+                    future_to_task[future_easy] = f'easyocr_{version_name}'
+                    
+                    # Tesseract任务（如果可用）
+                    if self._tesseract_available:
+                        future_tess = executor.submit(self._run_tesseract, processed_image, version_name)
+                        future_to_task[future_tess] = f'tesseract_{version_name}'
                 
-                performance_logger.debug(f"文本 '{text_stripped}' (置信度: {confidence:.3f}) 相关性: {is_relevant}, 阈值: {min_confidence}")
-                
-                if confidence > min_confidence:
-                    if is_relevant:
-                        results['text_boxes'].append({
-                            'text': text_stripped,
-                            'bbox': bbox,
-                            'confidence': confidence,
-                            'source': 'easyocr'
-                        })
-                        results['combined_text'] += text_stripped + ' '
-                        accepted_texts.append(text_stripped)
-                        performance_logger.debug(f"✅ 接受文本: '{text_stripped}'")
-                    else:
-                        # 高置信度的非相关文本也保留
-                        if confidence > 0.5:
-                            results['text_boxes'].append({
-                                'text': text_stripped,
-                                'bbox': bbox,
-                                'confidence': confidence,
-                                'source': 'easyocr',
-                                'filtered': True
-                            })
-                            filtered_texts.append(text_stripped)
-                else:
-                    performance_logger.debug(f"❌ 拒绝文本: '{text_stripped}' (置信度过低)")
+                # 收集所有OCR结果
+                for future in as_completed(future_to_task):
+                    task_name = future_to_task[future]
+                    try:
+                        ocr_result = future.result()
+                        if ocr_result:
+                            all_individual_results.extend(ocr_result)
+                            performance_logger.debug(f"OCR任务完成: {task_name}, 获得 {len(ocr_result)} 个文本")
+                    except Exception as e:
+                        performance_logger.error(f"OCR任务 {task_name} 失败: {e}")
             
-            results['easyocr_results'] = easyocr_results
-            performance_logger.info(f"EasyOCR识别完成，接受 {len(accepted_texts)} 个相关文本，过滤 {len(filtered_texts)} 个文本")
-            if accepted_texts:
-                performance_logger.info(f"接受的文本: {', '.join(accepted_texts[:5])}{'...' if len(accepted_texts) > 5 else ''}")
+            results['individual_results'] = all_individual_results
+            results['processing_summary'] = {
+                'total_texts': len(all_individual_results),
+                'preprocessing_methods': len(processed_versions),
+                'ocr_engines': 2 if self._tesseract_available else 1
+            }
+            
+            performance_logger.info(f"并行OCR识别完成，共获得 {len(all_individual_results)} 个文本结果")
             
         except Exception as e:
-            performance_logger.error(f"EasyOCR识别失败: {e}")
+            performance_logger.error(f"并行OCR识别失败: {e}")
         
         return results
     
-    def _is_game_relevant_text(self, text: str) -> bool:
-        """判断文本是否与游戏数据相关 - 专注于关键数据"""
-        text_lower = text.lower().strip()
-        
-        # 高优先级：等级相关
-        if re.search(r'lv\.?\s*\d+', text_lower):
-            return True
-        
-        # 高优先级：经验值格式 [数字][百分比%]
-        if re.search(r'\d+\s*[\[\(]\s*\d+\.?\d*\s*%', text):
-            return True
-        
-        # 高优先级：大数字（可能是金钱或经验）
-        if re.search(r'\d{4,}', text):  # 4位以上数字
-            return True
-        
-        # 高优先级：逗号分隔的数字（金钱格式）
-        if re.search(r'\d{1,3}(?:,\d{3})+', text):
-            return True
-        
-        # 中优先级：包含百分号的数字
-        if re.search(r'\d+\.?\d*\s*%', text):
-            return True
-        
-        # 中优先级：游戏相关关键词
-        game_keywords = [
-            'lv', 'level', 'exp', 'gold', 'meso', '币', '经验', '等级', 
-            'hp', 'mp', 'pp', '攻击', '防御', '魔法', '敏捷', '幸运',
-            'str', 'dex', 'int', 'luk', '力量', '敏捷', '智力', '运气',
-            'maplestory', 'worlds'
-        ]
-        for keyword in game_keywords:
-            if keyword in text_lower:
-                return True
-        
-        # 低优先级：包含数字的文本
-        if re.search(r'\d', text) and len(text.strip()) >= 2:
-            return True
-        
-        return False
+    def _run_easyocr(self, processed_image: np.ndarray, version_name: str) -> List[Dict]:
+        """运行EasyOCR识别"""
+        try:
+            easyocr_results = self._easyocr_reader.readtext(processed_image)
+            text_boxes = []
+            
+            for (bbox, text, confidence) in easyocr_results:
+                text_stripped = text.strip()
+                
+                if confidence > 0.3 and len(text_stripped) > 0:
+                    text_box = {
+                        'text': text_stripped,
+                        'bbox': bbox,
+                        'confidence': confidence,
+                        'source': f'easyocr_{version_name}',
+                        'engine': 'easyocr',
+                        'version': version_name,
+                        'timestamp': time.time()
+                    }
+                    text_boxes.append(text_box)
+            
+            return text_boxes
+            
+        except Exception as e:
+            performance_logger.error(f"EasyOCR识别失败 ({version_name}): {e}")
+            return []
     
-    def _extract_game_data(self, ocr_results: Dict[str, Any]) -> Dict[str, Any]:
-        """从OCR结果中提取游戏数据"""
+    def _run_tesseract(self, processed_image: np.ndarray, version_name: str) -> List[Dict]:
+        """运行Tesseract识别"""
+        try:
+            import pytesseract
+            
+            # 转换为PIL图像
+            pil_image = Image.fromarray(processed_image.astype('uint8'))
+            
+            # 配置Tesseract参数
+            config = '--oem 3 --psm 6 -c tessedit_char_whitelist=0123456789LVlv.:'
+            
+            # 获取详细识别结果
+            data = pytesseract.image_to_data(pil_image, config=config, output_type=pytesseract.Output.DICT)
+            
+            text_boxes = []
+            for i, text in enumerate(data['text']):
+                confidence = int(data['conf'][i])
+                if confidence > 30 and text.strip():  # Tesseract的置信度范围是0-100
+                    x, y, w, h = data['left'][i], data['top'][i], data['width'][i], data['height'][i]
+                    bbox = [[x, y], [x+w, y], [x+w, y+h], [x, y+h]]
+                    
+                    text_box = {
+                        'text': text.strip(),
+                        'bbox': bbox,
+                        'confidence': confidence / 100.0,  # 转换为0-1范围
+                        'source': f'tesseract_{version_name}',
+                        'engine': 'tesseract',
+                        'version': version_name,
+                        'timestamp': time.time()
+                    }
+                    text_boxes.append(text_box)
+            
+            return text_boxes
+            
+        except Exception as e:
+            performance_logger.error(f"Tesseract识别失败 ({version_name}): {e}")
+            return []
+    
+    def _extract_game_data_individual(self, ocr_results: Dict[str, Any]) -> Dict[str, Any]:
+        """从OCR结果中单独提取游戏数据，然后进行合理性分析"""
         game_data = {
             'level': None,
             'experience': None,
-            'money': None,
-            'raw_text': ocr_results['combined_text'],
-            'text_boxes': ocr_results['text_boxes'],
-            'extraction_details': {}  # 记录提取详情
+            'candidate_results': [],  # 所有候选结果
+            'selected_result': None,  # 最终选择的结果
+            'extraction_details': {},
+            'confidence_analysis': {}
         }
         
         try:
-            combined_text = ocr_results['combined_text']
-            performance_logger.info(f"开始数据提取，合并文本: '{combined_text}'")
+            individual_results = ocr_results.get('individual_results', [])
+            performance_logger.info(f"开始单独数据提取，共 {len(individual_results)} 个OCR结果")
             
-            # 从合并文本中提取数据
-            self._extract_from_combined_text(combined_text, game_data)
+            # 步骤1: 从每个OCR结果中单独提取数据
+            candidates = []
+            for i, text_box in enumerate(individual_results):
+                candidate = self._extract_single_result(text_box, i)
+                if candidate['level'] is not None or candidate['experience'] is not None:
+                    candidates.append(candidate)
             
-            # 使用文本框位置和内容进行精确提取
-            self._extract_data_from_boxes(ocr_results['text_boxes'], game_data)
+            game_data['candidate_results'] = candidates
+            performance_logger.info(f"提取到 {len(candidates)} 个候选结果")
             
-            performance_logger.info(f"数据提取结果: Level={game_data['level']}, Exp={game_data['experience']}, Money={game_data['money']}")
+            # 步骤2: 分析每个候选结果的合理性
+            for candidate in candidates:
+                self._analyze_candidate_reasonableness(candidate)
+            
+            # 步骤3: 结合历史数据选择最佳结果
+            combined_result = self._select_best_candidate_with_history(candidates)
+            
+            if combined_result:
+                game_data['level'] = combined_result.get('level')
+                game_data['experience'] = combined_result.get('experience')
+                game_data['selected_result'] = combined_result
+                
+                # 提取详细信息
+                selection_details = combined_result.get('selection_details', {})
+                game_data['extraction_details'] = {
+                    'level_source': selection_details.get('level_source'),
+                    'experience_source': selection_details.get('experience_source'),
+                    'level_score': selection_details.get('level_score', 0),
+                    'experience_score': selection_details.get('experience_score', 0)
+                }
+                
+                # 更新历史记录
+                self._update_history(combined_result)
+                
+                performance_logger.info(f"最终选择结果: Level={game_data['level']}, Exp={game_data['experience']}")
+                level_info = f"等级来源: {selection_details.get('level_source', 'None')}, 评分: {selection_details.get('level_score', 0):.1f}"
+                exp_info = f"经验来源: {selection_details.get('experience_source', 'None')}, 评分: {selection_details.get('experience_score', 0):.1f}"
+                performance_logger.info(f"{level_info}")
+                performance_logger.info(f"{exp_info}")
+            else:
+                performance_logger.warning("没有找到合适的候选结果")
             
         except Exception as e:
-            performance_logger.error(f"提取游戏数据失败: {e}")
+            performance_logger.error(f"单独数据提取失败: {e}")
         
         return game_data
     
-    def _extract_from_combined_text(self, combined_text: str, game_data: Dict[str, Any]):
-        """从合并文本中提取数据"""
+    def _extract_single_result(self, text_box: Dict, index: int) -> Dict[str, Any]:
+        """从单个OCR结果中提取数据"""
+        candidate = {
+            'index': index,
+            'text': text_box['text'],
+            'source': text_box.get('source', 'unknown'),
+            'engine': text_box.get('engine', 'unknown'),
+            'version': text_box.get('version', 'unknown'),
+            'confidence': text_box.get('confidence', 0),
+            'level': None,
+            'experience': None,
+            'extraction_method': None,
+            'details': {},
+            'reasonableness_score': 0
+        }
+        
+        text = text_box['text'].strip()
+        
         try:
-            # 提取等级信息 - 针对 "LV.58" 格式
-            if not game_data['level']:
-                level_patterns = [
-                    r'LV\.?\s*(\d+)',
-                    r'Level\.?\s*(\d+)',
-                    r'等级\.?\s*(\d+)'
-                ]
-                
-                for pattern in level_patterns:
-                    level_match = re.search(pattern, combined_text, re.IGNORECASE)
-                    if level_match:
-                        game_data['level'] = int(level_match.group(1))
-                        game_data['extraction_details']['level_source'] = 'combined_text'
-                        break
+            # 尝试提取等级
+            level = self._extract_level_from_text(text)
+            if level is not None:
+                candidate['level'] = level
+                candidate['extraction_method'] = 'level_pattern'
+                candidate['details']['level_source'] = f"single_text_{text_box.get('source', 'unknown')}"
             
-            # 提取经验值信息 - 针对 "EXP 542552149 [49.88%]" 格式优化
-            if not game_data['experience']:
-                exp_patterns = [
-                    # 优先匹配明确的EXP格式
-                    r'EXP\.?\s+(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%]
-                    r'EXP\.?\s+(\d+(?:,\d{3})*)\s+[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%] (多空格)
-                    r'EXP\s*(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',     # EXP542552149[49.88%] (紧凑格式)
-                    # 通用格式
-                    r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',           # 542552149[49.88%]
-                    r'(\d+(?:,\d{3})*)/(\d+(?:,\d{3})*)\s*\((\d+(?:\.\d+)?)%?\)', # 495632/1087536(45.57%)
-                    # 容错格式（处理OCR识别错误）
-                    r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',                      # 巨522892[4808% (包含前缀字符)
-                    r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',                        # 522892[4808 (4位以上数字+百分比)
-                ]
-                
-                for pattern in exp_patterns:
-                    exp_match = re.search(pattern, combined_text)
-                    if exp_match:
-                        try:
-                            if len(exp_match.groups()) == 2:  # 格式1: 495632[45.57%] 或 巨522892[4808%
-                                exp_value = int(exp_match.group(1).replace(',', ''))
-                                exp_percentage = float(exp_match.group(2))
-                            elif len(exp_match.groups()) == 3:  # 格式2: 495632/1087536(45.57%)
-                                exp_value = int(exp_match.group(1).replace(',', ''))
-                                exp_percentage = float(exp_match.group(3))
-                            
-                            # 验证数据合理性 - 处理OCR识别错误
-                            # 如果百分比过大，可能是小数点丢失，尝试修正
-                            if exp_percentage > 100:
-                                # 尝试将百分比除以100（如4808 -> 48.08）
-                                if exp_percentage <= 10000:
-                                    exp_percentage = exp_percentage / 100
-                                else:
-                                    # 百分比过大，可能是识别错误，跳过
-                                    continue
-                            
-                            # 添加经验值合理性检查（调整为10亿上限，适应高等级游戏）
-                            if exp_value > 0 and exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
-                                game_data['experience'] = {
-                                    'value': exp_value,
-                                    'percentage': exp_percentage
-                                }
-                                game_data['extraction_details']['experience_source'] = 'combined_text'
-                                performance_logger.info(f"从合并文本提取经验: {exp_value} ({exp_percentage}%)")
-                                break
-                            else:
-                                performance_logger.warning(f"经验值数据不合理，跳过: {exp_value} ({exp_percentage}%)")
-                        except (ValueError, IndexError) as e:
-                            performance_logger.warning(f"经验值解析失败: {e}, 文本: {exp_match.group()}")
-                            continue
+            # 尝试提取经验值
+            experience = self._extract_experience_from_text(text)
+            if experience is not None:
+                candidate['experience'] = experience
+                candidate['extraction_method'] = 'experience_pattern'
+                candidate['details']['experience_source'] = f"single_text_{text_box.get('source', 'unknown')}"
             
-            # 提取金钱信息 - 针对 "2,669,704" 格式
-            if not game_data['money']:
-                money_patterns = [
-                    r'(\d{1,3}(?:,\d{3})+)(?!\s*[\[\(/])',  # 匹配逗号分隔的大数字，但不是经验值
-                    r'金钱[:\s]*(\d{1,3}(?:,\d{3})*)',
-                    r'Money[:\s]*(\d{1,3}(?:,\d{3})*)',
-                    r'(\d{1,3}(?:,\d{3})*)\s*(?:gold|meso|币)',
-                ]
-                
-                for pattern in money_patterns:
-                    money_matches = re.finditer(pattern, combined_text, re.IGNORECASE)
-                    for money_match in money_matches:
-                        money_value_str = money_match.group(1).replace(',', '')
-                        money_value = int(money_value_str)
-                        
-                        # 过滤掉可能是经验值的数字（通常经验值较小）
-                        if money_value > 100000:  # 金钱通常比经验值大
-                            game_data['money'] = money_value
-                            game_data['extraction_details']['money_source'] = 'combined_text'
-                            break
-                    
-                    if game_data['money']:
-                        break
-                        
+            # 如果是橙色背景优化的结果，尝试数字组合
+            if 'orange_optimized' in text_box.get('source', '') or 'color_separated' in text_box.get('source', ''):
+                if text.isdigit() and candidate['level'] is None:
+                    num = int(text)
+                    if 1 <= num <= 300:
+                        candidate['level'] = num
+                        candidate['extraction_method'] = 'orange_digit'
+                        candidate['details']['level_source'] = 'orange_background_digit'
+            
         except Exception as e:
-            performance_logger.error(f"从合并文本提取数据失败: {e}")
+            performance_logger.error(f"单个结果提取失败 (index {index}): {e}")
+        
+        return candidate
     
-    def _extract_data_from_boxes(self, text_boxes: List[Dict], game_data: Dict[str, Any]):
-        """从文本框中提取更精确的数据"""
-        try:
-            # 按位置对文本框进行分组，便于组合识别
-            all_texts = []
-            for box in text_boxes:
-                text = box['text'].strip()
-                confidence = box.get('confidence', 0)
-                
-                # 对游戏相关文本使用更低的置信度要求
-                is_relevant = self._is_game_relevant_text(text)
-                min_confidence = 0.1 if is_relevant else 0.5
-                
-                if confidence < min_confidence:
+    def _extract_level_from_text(self, text: str) -> Optional[int]:
+        """从文本中提取等级"""
+        level_patterns = [
+            r'LV\.?\s*(\d+)',
+            r'LV:\s*(\d+)',
+            r'Lv\.?\s*(\d+)',
+            r'Level:?\s*(\d+)',
+        ]
+        
+        for pattern in level_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    level = int(match.group(1))
+                    if 1 <= level <= 300:
+                        return level
+                except ValueError:
                     continue
-                
-                all_texts.append({
-                    'text': text,
-                    'bbox': box['bbox'],
-                    'confidence': confidence,
-                    'region': box.get('region', 'unknown')
-                })
-            
-            # 尝试组合相邻的文本来重建完整信息
-            combined_texts = self._combine_nearby_texts(all_texts)
-            
-            # 从组合文本中提取数据
-            for combined_text in combined_texts:
-                text = combined_text['text']
-                
-                # 查找等级相关的文本框
-                if not game_data['level']:
-                    # 更精确的等级匹配，优先匹配明确的等级格式
-                    level_patterns = [
-                        r'LV\.?\s*(\d+)',
-                        r'Level\.?\s*(\d+)',
-                        r'等级\.?\s*(\d+)',
-                    ]
-                    
-                    # 首先尝试明确的等级格式
-                    for pattern in level_patterns:
-                        level_match = re.search(pattern, text, re.IGNORECASE)
-                        if level_match:
-                            level_value = int(level_match.group(1))
-                            if 1 <= level_value <= 300:  # 合理的等级范围
-                                game_data['level'] = level_value
-                                game_data['extraction_details']['level_source'] = 'text_box'
-                                performance_logger.info(f"从文本框提取等级: {level_value}")
-                                break
-                    
-                    # 如果没有找到明确格式，再尝试单独数字（但要更严格）
-                    if not game_data['level']:
-                        # 只有当文本是纯数字且在合理范围内时才认为是等级
-                        if re.match(r'^\d{1,3}$', text.strip()):
-                            level_value = int(text.strip())
-                            # 更严格的等级范围，避免误识别大数字
-                            if 1 <= level_value <= 200 and level_value not in [542552149, 2723302]:  # 排除明显的经验值和金钱
-                                game_data['level'] = level_value
-                                game_data['extraction_details']['level_source'] = 'text_box'
-                                performance_logger.info(f"从文本框提取等级（纯数字）: {level_value}")
-                
-                # 查找经验相关的文本框 - 针对EXP格式优化
-                if not game_data['experience']:
-                    exp_patterns = [
-                        # 优先匹配明确的EXP格式
-                        r'EXP\.?\s+(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%]
-                        r'EXP\.?\s+(\d+(?:,\d{3})*)\s+[\[\(](\d+(?:\.\d+)?)%[\]\)]',  # EXP 542552149 [49.88%] (多空格)
-                        r'EXP\s*(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',     # EXP542552149[49.88%] (紧凑格式)
-                        # 通用格式
-                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+(?:\.\d+)?)%[\]\)]',           # 542552149[49.88%]
-                        r'(\d+(?:,\d{3})*)\s*[\[\(](\d+)[\]\)]',                      # 无小数点
-                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?[\]\)]',                  # 4位以上数字+百分比
-                        # 容错格式
-                        r'[^\d]*(\d+)\s*[\[\(](\d+(?:\.\d+)?)%',                      # 巨522892[4808% (包含前缀字符)
-                        r'(\d{4,})\s*[\[\(](\d+(?:\.\d+)?)%?',                        # 522892[4808 (4位以上数字+百分比)
-                        r'(\d{4,})',                                                  # 单独的大数字可能是经验值
-                    ]
-                    
-                    for pattern in exp_patterns:
-                        exp_match = re.search(pattern, text)
-                        if exp_match:
-                            try:
-                                if len(exp_match.groups()) >= 2:
-                                    exp_value = int(exp_match.group(1).replace(',', ''))
-                                    try:
-                                        exp_percentage = float(exp_match.group(2))
-                                    except:
-                                        exp_percentage = 0.0
-                                    
-                                    # 验证数据合理性 - 处理OCR识别错误
-                                    # 如果百分比过大，可能是小数点丢失，尝试修正
-                                    if exp_percentage > 100:
-                                        # 尝试将百分比除以100（如4808 -> 48.08）
-                                        if exp_percentage <= 10000:
-                                            exp_percentage = exp_percentage / 100
-                                        else:
-                                            # 百分比过大，可能是识别错误，跳过
-                                            continue
-                                    
-                                    # 添加经验值合理性检查（调整为10亿上限，适应高等级游戏）
-                                    if exp_value > 0 and exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
-                                        game_data['experience'] = {
-                                            'value': exp_value,
-                                            'percentage': exp_percentage
-                                        }
-                                        game_data['extraction_details']['experience_source'] = 'text_box'
-                                        performance_logger.info(f"从文本框提取经验: {exp_value} ({exp_percentage}%)")
-                                        break
-                                    else:
-                                        performance_logger.warning(f"文本框经验值数据不合理，跳过: {exp_value} ({exp_percentage}%)")
-                                elif len(exp_match.groups()) == 1:
-                                    exp_value = int(exp_match.group(1).replace(',', ''))
-                                    # 添加经验值合理性检查（调整为10亿上限）
-                                    if exp_value > 1000 and exp_value <= 1000000000:  # 可能的经验值，但不能太大
-                                        game_data['experience'] = {
-                                            'value': exp_value,
-                                            'percentage': 0.0
-                                        }
-                                        game_data['extraction_details']['experience_source'] = 'text_box'
-                                        performance_logger.info(f"从文本框提取经验值: {exp_value}")
-                                        break
-                                    else:
-                                        performance_logger.warning(f"单独经验值数据不合理，跳过: {exp_value}")
-                            except (ValueError, IndexError) as e:
-                                performance_logger.warning(f"文本框经验值解析失败: {e}, 文本: {text}")
-                                continue
-                
-                # 查找金钱相关的文本框 - 更灵活的匹配
-                if not game_data['money']:
-                    money_patterns = [
-                        r'(\d{1,3}(?:,\d{3})+)',  # 逗号分隔的大数字
-                        r'(\d{6,})',  # 6位以上的数字可能是金钱
-                    ]
-                    
-                    for pattern in money_patterns:
-                        money_match = re.search(pattern, text)
-                        if money_match:
-                            money_value = int(money_match.group(1).replace(',', ''))
-                            # 确保这是金钱而不是经验值
-                            if money_value > 100000 and '%' not in text:
-                                game_data['money'] = money_value
-                                game_data['extraction_details']['money_source'] = 'text_box'
-                                performance_logger.info(f"从文本框提取金钱: {money_value}")
-                                break
-                            
-        except Exception as e:
-            performance_logger.error(f"从文本框提取数据失败: {e}")
+        
+        return None
     
-    def _combine_nearby_texts(self, text_boxes: List[Dict]) -> List[Dict]:
-        """组合相邻的文本框以重建完整信息"""
-        try:
-            if not text_boxes:
-                return []
-            
-            # 按Y坐标排序（从上到下）
-            sorted_boxes = sorted(text_boxes, key=lambda x: self._get_bbox_center(x['bbox'])[1])
-            
-            combined = []
-            current_line = []
-            current_y = None
-            y_threshold = 30  # Y坐标差异阈值
-            
-            for box in sorted_boxes:
-                center_x, center_y = self._get_bbox_center(box['bbox'])
-                
-                if current_y is None or abs(center_y - current_y) <= y_threshold:
-                    # 同一行
-                    current_line.append(box)
-                    current_y = center_y
-                else:
-                    # 新的一行
-                    if current_line:
-                        combined.append(self._merge_line_texts(current_line))
-                    current_line = [box]
-                    current_y = center_y
-            
-            # 处理最后一行
-            if current_line:
-                combined.append(self._merge_line_texts(current_line))
-            
-            # 同时保留原始的单个文本框
-            for box in text_boxes:
-                combined.append({
-                    'text': box['text'],
-                    'bbox': box['bbox'],
-                    'confidence': box['confidence']
-                })
-            
-            return combined
-            
-        except Exception as e:
-            performance_logger.error(f"组合相邻文本失败: {e}")
-            return text_boxes
+    def _extract_experience_from_text(self, text: str) -> Optional[Dict[str, float]]:
+        """从文本中提取经验值"""
+        exp_patterns = [
+            r'EXP(\d+)\[([\d.]+)%\s*\]',
+            r'EXP\s*(\d+)\s*\[([\d.]+)%\s*\]',
+            r'EXP(\d+)\s*\[\s*([\d.]+)\s*%\s*\]',
+        ]
+        
+        for pattern in exp_patterns:
+            match = re.search(pattern, text, re.IGNORECASE)
+            if match:
+                try:
+                    exp_value = int(match.group(1))
+                    exp_percentage = float(match.group(2))
+                    
+                    if exp_value > 0 and exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
+                        return {
+                            'value': exp_value,
+                            'percentage': exp_percentage
+                        }
+                except (ValueError, IndexError):
+                    continue
+        
+        return None
     
-    def _get_bbox_center(self, bbox) -> Tuple[float, float]:
-        """获取边界框中心点"""
-        try:
-            if isinstance(bbox[0], list):  # [[x1,y1], [x2,y2], ...]格式
-                x_coords = [point[0] for point in bbox]
-                y_coords = [point[1] for point in bbox]
-                center_x = sum(x_coords) / len(x_coords)
-                center_y = sum(y_coords) / len(y_coords)
-            else:  # [x1, y1, x2, y2]格式
-                center_x = (bbox[0] + bbox[2]) / 2
-                center_y = (bbox[1] + bbox[3]) / 2
+    def _analyze_candidate_reasonableness(self, candidate: Dict[str, Any]):
+        """分析候选结果的合理性"""
+        score = 0
+        
+        # 基础置信度评分 (0-30分)
+        confidence = candidate.get('confidence', 0)
+        score += min(confidence * 30, 30)
+        
+        # 等级合理性评分 (0-25分)
+        level = candidate.get('level')
+        if level is not None:
+            if 1 <= level <= 300:
+                score += 20
+                # 与历史数据的一致性
+                if self._recent_levels:
+                    recent_avg = sum(self._recent_levels) / len(self._recent_levels)
+                    level_diff = abs(level - recent_avg)
+                    if level_diff <= 2:  # 等级变化在2级以内
+                        score += 5
+                    elif level_diff <= 5:  # 等级变化在5级以内
+                        score += 2
+            else:
+                score -= 20  # 不合理的等级扣分
+        
+        # 经验值合理性评分 (0-25分)
+        experience = candidate.get('experience')
+        if experience is not None:
+            exp_value = experience.get('value', 0)
+            exp_percentage = experience.get('percentage', 0)
             
-            return center_x, center_y
-        except:
-            return 0.0, 0.0
+            if 0 < exp_value <= 1000000000 and 0 <= exp_percentage <= 100:
+                score += 20
+                # 与历史数据的一致性
+                if self._recent_experiences:
+                    recent_exp = self._recent_experiences[-1] if self._recent_experiences else None
+                    if recent_exp:
+                        # 经验值应该只增不减（除非升级）
+                        if exp_value >= recent_exp.get('value', 0):
+                            score += 5
+            else:
+                score -= 20  # 不合理的经验值扣分
+        
+        # 来源可靠性评分 (0-20分)
+        source = candidate.get('source', '')
+        engine = candidate.get('engine', '')
+        
+        # EasyOCR通常更可靠
+        if 'easyocr' in engine:
+            score += 10
+        elif 'tesseract' in engine:
+            score += 8
+        
+        # 橙色背景优化的结果更可靠（针对我们的场景）
+        if 'orange_optimized' in source:
+            score += 10
+        elif 'color_separated' in source:
+            score += 8
+        elif 'high_contrast' in source:
+            score += 6
+        else:
+            score += 4
+        
+        candidate['reasonableness_score'] = score
+        performance_logger.debug(f"候选结果评分: {score}, 文本: '{candidate['text']}', 来源: {source}")
     
-    def _merge_line_texts(self, line_boxes: List[Dict]) -> Dict:
-        """合并同一行的文本框"""
-        try:
-            # 按X坐标排序（从左到右）
-            sorted_line = sorted(line_boxes, key=lambda x: self._get_bbox_center(x['bbox'])[0])
-            
-            merged_text = ' '.join([box['text'] for box in sorted_line])
-            avg_confidence = sum([box['confidence'] for box in sorted_line]) / len(sorted_line)
-            
-            # 使用第一个框的bbox作为代表
-            merged_bbox = sorted_line[0]['bbox']
-            
-            return {
-                'text': merged_text,
-                'bbox': merged_bbox,
-                'confidence': avg_confidence
+    def _select_best_candidate_with_history(self, candidates: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """结合历史数据选择最佳候选结果"""
+        if not candidates:
+            return None
+        
+        # 分别提取包含等级和经验值的候选
+        level_candidates = [c for c in candidates if c.get('level') is not None]
+        experience_candidates = [c for c in candidates if c.get('experience') is not None]
+        
+        # 按合理性评分排序
+        level_candidates.sort(key=lambda x: x['reasonableness_score'], reverse=True)
+        experience_candidates.sort(key=lambda x: x['reasonableness_score'], reverse=True)
+        
+        # 记录评分前几名
+        performance_logger.info("=== 等级候选结果排名 ===")
+        for i, candidate in enumerate(level_candidates[:3]):
+            performance_logger.info(f"等级Top {i+1}: 评分={candidate['reasonableness_score']:.1f}, "
+                                  f"Level={candidate.get('level')}, "
+                                  f"来源={candidate.get('source')}")
+        
+        performance_logger.info("=== 经验值候选结果排名 ===")
+        for i, candidate in enumerate(experience_candidates[:3]):
+            performance_logger.info(f"经验Top {i+1}: 评分={candidate['reasonableness_score']:.1f}, "
+                                  f"Exp={candidate.get('experience')}, "
+                                  f"来源={candidate.get('source')}")
+        
+        # 选择最佳等级和经验值候选
+        best_level_candidate = level_candidates[0] if level_candidates else None
+        best_exp_candidate = experience_candidates[0] if experience_candidates else None
+        
+        # 创建综合结果
+        combined_result = {
+            'level': best_level_candidate.get('level') if best_level_candidate else None,
+            'experience': best_exp_candidate.get('experience') if best_exp_candidate else None,
+            'level_candidate': best_level_candidate,
+            'experience_candidate': best_exp_candidate,
+            'selection_details': {
+                'level_score': best_level_candidate.get('reasonableness_score', 0) if best_level_candidate else 0,
+                'experience_score': best_exp_candidate.get('reasonableness_score', 0) if best_exp_candidate else 0,
+                'level_source': best_level_candidate.get('source') if best_level_candidate else None,
+                'experience_source': best_exp_candidate.get('source') if best_exp_candidate else None
             }
-        except Exception as e:
-            performance_logger.error(f"合并行文本失败: {e}")
-            return line_boxes[0] if line_boxes else {'text': '', 'bbox': [], 'confidence': 0}
+        }
+        
+        # 额外的历史一致性检查
+        level = combined_result.get('level')
+        experience = combined_result.get('experience')
+        
+        if level is not None and best_level_candidate.get('reasonableness_score', 0) < 50:
+            performance_logger.warning(f"等级候选评分较低: {best_level_candidate.get('reasonableness_score'):.1f}, 需要谨慎处理")
+        
+        if experience is not None and best_exp_candidate.get('reasonableness_score', 0) < 50:
+            performance_logger.warning(f"经验值候选评分较低: {best_exp_candidate.get('reasonableness_score'):.1f}, 需要谨慎处理")
+        
+        performance_logger.info(f"=== 最终选择结果 ===")
+        performance_logger.info(f"等级: {level} (来源: {combined_result['selection_details']['level_source']}, 评分: {combined_result['selection_details']['level_score']:.1f})")
+        performance_logger.info(f"经验: {experience} (来源: {combined_result['selection_details']['experience_source']}, 评分: {combined_result['selection_details']['experience_score']:.1f})")
+        
+        return combined_result
+    
+    def _update_history(self, selected_result: Dict[str, Any]):
+        """更新历史记录"""
+        level = selected_result.get('level')
+        experience = selected_result.get('experience')
+        
+        if level is not None:
+            self._recent_levels.append(level)
+            if len(self._recent_levels) > self._history_limit:
+                self._recent_levels.pop(0)
+        
+        if experience is not None:
+            self._recent_experiences.append(experience)
+            if len(self._recent_experiences) > self._history_limit:
+                self._recent_experiences.pop(0)
+        
+        performance_logger.debug(f"历史记录已更新: 等级={self._recent_levels}, 经验数量={len(self._recent_experiences)}")
     
     def _save_ocr_result(self, game_data: Dict[str, Any], timestamp: str) -> str:
         """保存OCR结果到文件"""
@@ -765,7 +869,7 @@ class EnhancedOCRManager(QThread):
         return []
     
     def _create_easyocr_visualization(self, image: Image.Image, ocr_results: Dict[str, Any], timestamp: str) -> str:
-        """使用PIL创建EasyOCR可视化"""
+        """创建多引擎并行OCR可视化"""
         try:
             from PIL import ImageDraw, ImageFont
             
@@ -776,39 +880,141 @@ class EnhancedOCRManager(QThread):
             # 尝试加载字体
             try:
                 font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 16)
+                small_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 12)
+                tiny_font = ImageFont.truetype("/System/Library/Fonts/Arial.ttf", 10)
             except:
                 font = ImageFont.load_default()
+                small_font = ImageFont.load_default()
+                tiny_font = ImageFont.load_default()
             
-            # 绘制文本框和识别结果
-            for box in ocr_results['text_boxes']:
+            # 定义不同引擎和处理版本的颜色
+            colors = {
+                'easyocr_standard': 'red',
+                'easyocr_orange_optimized': 'orange',
+                'easyocr_high_contrast': 'blue',
+                'easyocr_color_separated': 'green',
+                'tesseract_standard': 'purple',
+                'tesseract_orange_optimized': 'magenta',
+                'tesseract_high_contrast': 'cyan',
+                'tesseract_color_separated': 'yellow'
+            }
+            
+            # 绘制所有识别结果
+            individual_results = ocr_results.get('individual_results', [])
+            candidate_results = ocr_results.get('candidate_results', [])
+            selected_result = ocr_results.get('selected_result')
+            
+            # 绘制所有文本框
+            for i, box in enumerate(individual_results):
                 bbox = box['bbox']
                 text = box['text']
                 confidence = box['confidence']
+                source = box.get('source', 'unknown')
                 
-                # EasyOCR的bbox格式: [[x1,y1], [x2,y2], [x3,y3], [x4,y4]]
-                points = [(point[0], point[1]) for point in bbox]
+                # 选择颜色
+                color = colors.get(source, 'gray')
+                
+                # 检查是否是选中的结果
+                is_selected = False
+                if selected_result:
+                    selected_text = selected_result.get('text', '')
+                    selected_source = selected_result.get('source', '')
+                    if text == selected_text and source == selected_source:
+                        is_selected = True
+                        color = 'lime'  # 选中结果用亮绿色
                 
                 # 绘制边框
-                draw.polygon(points, outline='red', width=2)
+                try:
+                    line_width = 3 if is_selected else 2
+                    
+                    if isinstance(bbox[0], list):  # EasyOCR格式: [[x1,y1], [x2,y2], ...]
+                        points = [(point[0], point[1]) for point in bbox]
+                        draw.polygon(points, outline=color, width=line_width)
+                        x1, y1 = points[0]
+                    else:  # Tesseract格式: [x1, y1, x2, y2]
+                        x1, y1, x2, y2 = bbox
+                        draw.rectangle([x1, y1, x2, y2], outline=color, width=line_width)
+                    
+                    # 在文本框上方绘制标签
+                    engine = box.get('engine', 'unknown')
+                    version = box.get('version', 'unknown')
+                    label = f"{text} ({confidence:.2f}) [{engine}_{version}]"
+                    
+                    if is_selected:
+                        label = f"✅ {label} [SELECTED]"
+                    
+                    # 计算标签背景
+                    y_offset = -35 if is_selected else -25
+                    font_to_use = small_font if is_selected else tiny_font
+                    
+                    bbox_label = draw.textbbox((x1, y1 + y_offset), label, font=font_to_use)
+                    draw.rectangle(bbox_label, fill='white', outline=color)
+                    draw.text((x1, y1 + y_offset + 2), label, fill=color, font=font_to_use)
+                    
+                except Exception as e:
+                    performance_logger.warning(f"绘制文本框 {i} 失败: {e}")
+                    continue
+            
+            # 在图像顶部添加汇总信息
+            summary_text = f"并行OCR识别结果 (时间: {timestamp})"
+            draw.text((10, 10), summary_text, fill='black', font=font)
+            
+            # 添加处理摘要
+            processing_summary = ocr_results.get('processing_summary', {})
+            if processing_summary:
+                summary_info = (f"总文本: {processing_summary.get('total_texts', 0)}, "
+                              f"预处理方法: {processing_summary.get('preprocessing_methods', 0)}, "
+                              f"OCR引擎: {processing_summary.get('ocr_engines', 0)}")
+                draw.text((10, 35), summary_info, fill='darkblue', font=small_font)
+            
+            # 添加候选结果信息
+            if candidate_results:
+                candidate_info = f"候选结果: {len(candidate_results)} 个"
+                draw.text((10, 55), candidate_info, fill='purple', font=small_font)
                 
-                # 在文本框上方绘制文本和置信度
-                x1, y1 = points[0]
-                label = f"{text} ({confidence:.2f})"
-                draw.text((x1, y1-20), label, fill='red', font=font)
+                # 显示前3个候选的评分
+                top_candidates = sorted(candidate_results, key=lambda x: x.get('reasonableness_score', 0), reverse=True)[:3]
+                for i, candidate in enumerate(top_candidates):
+                    score = candidate.get('reasonableness_score', 0)
+                    level = candidate.get('level')
+                    exp = candidate.get('experience')
+                    source = candidate.get('source', 'unknown')
+                    
+                    result_text = f"#{i+1} 评分:{score:.1f}"
+                    if level is not None:
+                        result_text += f" LV:{level}"
+                    if exp is not None:
+                        result_text += f" EXP:{exp.get('value', 0)}"
+                    result_text += f" [{source}]"
+                    
+                    color = 'darkgreen' if i == 0 else 'orange' if i == 1 else 'brown'
+                    draw.text((10, 75 + i * 15), result_text, fill=color, font=tiny_font)
+            
+            # 添加最终提取结果
+            if selected_result:
+                level = selected_result.get('level')
+                experience = selected_result.get('experience')
+                final_text = f"最终结果: "
+                if level is not None:
+                    final_text += f"LV.{level} "
+                if experience is not None:
+                    final_text += f"EXP:{experience.get('value', 0)}({experience.get('percentage', 0):.1f}%)"
+                
+                draw.text((10, image.height - 30), final_text, fill='darkgreen', font=font)
             
             # 保存可视化图像
             viz_path = os.path.join(
                 self._output_folder, 'annotated_images',
-                f"easyocr_viz_{timestamp}.png"
+                f"parallel_ocr_viz_{timestamp}.png"
             )
             
             viz_image.save(viz_path)
             
-            performance_logger.info(f"EasyOCR可视化已保存: {viz_path}")
+            performance_logger.info(f"并行OCR可视化已保存: {viz_path}")
             return viz_path
             
         except Exception as e:
-            performance_logger.error(f"创建EasyOCR可视化失败: {e}")
+            performance_logger.error(f"创建并行OCR可视化失败: {e}")
             return ""
     
     def run(self):
@@ -829,9 +1035,9 @@ class EnhancedOCRManager(QThread):
         
         # 2. 检查OCR引擎是否已加载
         if not self._ocr_engine_loaded:
-            self._load_ocr_engine()
+            self._load_ocr_engines()
             if not self._ocr_engine_loaded:
-                self.error_occurred.emit("EasyOCR引擎加载失败，请检查依赖包安装")
+                self.error_occurred.emit("OCR引擎加载失败，请检查依赖包安装")
                 return
         
         # 发送触发信号
@@ -873,10 +1079,10 @@ class EnhancedOCRManager(QThread):
                 performance_logger.info(f"截图已保存: {screenshot_path}")
             
             # 4. 进行OCR识别
-            ocr_results = self._perform_ocr(screenshot)
+            ocr_results = self._perform_ocr_parallel(screenshot)
             
             # 5. 提取游戏数据
-            game_data = self._extract_game_data(ocr_results)
+            game_data = self._extract_game_data_individual(ocr_results)
             game_data['timestamp'] = timestamp
             game_data['screenshot_path'] = screenshot_path
             
@@ -884,8 +1090,16 @@ class EnhancedOCRManager(QThread):
             self._last_ocr_result = game_data.copy()
             
             # 6. 保存结果和可视化
+            # 创建包含所有信息的完整结果用于可视化
+            complete_results = {
+                'individual_results': ocr_results.get('individual_results', []),
+                'processing_summary': ocr_results.get('processing_summary', {}),
+                'candidate_results': game_data.get('candidate_results', []),
+                'selected_result': game_data.get('selected_result', None)
+            }
+            
             easyocr_viz_path = self._create_easyocr_visualization(
-                screenshot, ocr_results, timestamp
+                screenshot, complete_results, timestamp
             )
             game_data['visualization_path'] = easyocr_viz_path
             
@@ -905,7 +1119,7 @@ class EnhancedOCRManager(QThread):
             total_time = time.time() - start_time
             performance_logger.info(f"单次OCR完成: {timestamp}, 总耗时: {total_time:.2f}秒")
             performance_logger.info(f"OCR结果已保存: {ocr_result_path}")
-            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}, 金钱={game_data.get('money')}")
+            performance_logger.info(f"识别数据: 等级={game_data.get('level')}, 经验={game_data.get('experience')}")
             
         except Exception as e:
             error_msg = f"单次OCR过程出错: {e}"
@@ -913,7 +1127,7 @@ class EnhancedOCRManager(QThread):
             self.error_occurred.emit(error_msg)
     
     def _capture_screenshot(self) -> Optional[Image.Image]:
-        """执行截图操作"""
+        """执行截图操作 - 支持高分辨率"""
         try:
             # 根据配置决定截图方式
             if self._config.get('capture_window_only', True):
@@ -923,10 +1137,26 @@ class EnhancedOCRManager(QThread):
                     screenshot = self._capture_window_screenshot(window_bounds)
                 else:
                     performance_logger.warning("无法获取窗口边界，使用全屏截图")
-                    screenshot = ImageGrab.grab()
+                    screenshot = ImageGrab.grab(all_screens=True)
+                    
+                    # 应用缩放因子
+                    scale_factor = self._config.get('screenshot_scale', 2.0)
+                    if scale_factor != 1.0:
+                        new_width = int(screenshot.width * scale_factor)
+                        new_height = int(screenshot.height * scale_factor)
+                        screenshot = screenshot.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                        performance_logger.info(f"全屏截图已缩放到 {scale_factor}x 分辨率: {new_width}x{new_height}")
             else:
                 # 全屏截图
-                screenshot = ImageGrab.grab()
+                screenshot = ImageGrab.grab(all_screens=True)
+                
+                # 应用缩放因子
+                scale_factor = self._config.get('screenshot_scale', 2.0)
+                if scale_factor != 1.0:
+                    new_width = int(screenshot.width * scale_factor)
+                    new_height = int(screenshot.height * scale_factor)
+                    screenshot = screenshot.resize((new_width, new_height), Image.Resampling.LANCZOS)
+                    performance_logger.info(f"全屏截图已缩放到 {scale_factor}x 分辨率: {new_width}x{new_height}")
             
             return screenshot
             

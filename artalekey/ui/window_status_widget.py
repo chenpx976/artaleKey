@@ -70,7 +70,7 @@ class WindowStatusWidget(QWidget):
                 padding: 8px;
                 border: 1px solid lightgray;
                 border-radius: 4px;
-                background-color: #f5f5f5;
+                background-color: #000000;
                 font-family: monospace;
             }
         """)
