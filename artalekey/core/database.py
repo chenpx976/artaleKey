@@ -1,18 +1,35 @@
 import sqlite3
 import os
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional, List, Dict, Any
 import numpy as np
 from artalekey.core.logger import performance_logger
+import sys
+
+def _get_app_data_dir():
+    """获取应用数据目录"""
+    # 如果是打包的应用程序
+    if hasattr(sys, '_MEIPASS'):
+        # PyInstaller打包后的临时目录
+        base_dir = os.path.dirname(sys.executable)
+        # 在应用程序同级目录创建数据文件夹
+        data_dir = os.path.join(os.path.dirname(base_dir), 'ocr_data')
+    else:
+        # 开发环境，使用模块相对路径
+        module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        data_dir = os.path.join(module_dir, 'ocr_data')
+    
+    return data_dir
 
 class GameDataDatabase:
     """游戏数据数据库管理器"""
     
     def __init__(self, db_path: str = None):
         if db_path is None:
-            # 默认数据库路径
-            db_path = os.path.join(os.getcwd(), 'ocr_data', 'game_data.db')
+            # 使用应用数据目录而不是当前工作目录
+            data_dir = _get_app_data_dir()
+            db_path = os.path.join(data_dir, 'game_data.db')
         
         self.db_path = db_path
         self._ensure_db_directory()
@@ -369,7 +386,6 @@ class GameDataDatabase:
                     return []
                 
                 # 解析经验数据并按时间间隔分组
-                from datetime import datetime, timedelta
                 import re
                 
                 time_groups = {}

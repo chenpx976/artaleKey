@@ -222,18 +222,16 @@ class TabbedMainWindow(QMainWindow):
             QMessageBox.warning(self, "错误", f"数据清理失败: {e}")
     
     def _export_data(self):
-        """导出数据"""
+        """导出数据到JSON文件"""
         try:
-            from artalekey.core.database import game_db
-            import json
-            import os
             from datetime import datetime
+            from artalekey.core.database import _get_app_data_dir
             
             # 获取所有数据
             data = game_db.get_data_history(1000)  # 最多导出1000条
             
-            # 导出到JSON文件
-            export_path = os.path.join(os.getcwd(), 'ocr_data', f'export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
+            # 使用应用数据目录而不是当前工作目录
+            export_path = os.path.join(_get_app_data_dir(), f'export_{datetime.now().strftime("%Y%m%d_%H%M%S")}.json')
             os.makedirs(os.path.dirname(export_path), exist_ok=True)
             
             with open(export_path, 'w', encoding='utf-8') as f:

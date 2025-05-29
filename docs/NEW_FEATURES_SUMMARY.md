@@ -103,7 +103,6 @@ CREATE TABLE game_data (
 
 ### 启动应用
 ```bash
-cd /Users/color/projj/github.com/chenpx976/artaleKey
 python -m artalekey
 ```
 

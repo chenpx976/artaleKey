@@ -12,7 +12,7 @@ import numpy as np
 from artalekey.core.logger import performance_logger
 from artalekey.core.config import config_manager
 from artalekey.core.window_detector import WindowDetector
-from artalekey.core.database import game_db
+from artalekey.core.database import game_db, _get_app_data_dir
 
 class EnhancedOCRManager(QThread):
     """增强的OCR管理器 - 使用多种OCR引擎，专门优化橙色背景白色文字识别"""
@@ -50,8 +50,10 @@ class EnhancedOCRManager(QThread):
         
     def _setup_output_folder(self):
         """设置输出文件夹"""
-        folder_name = config_manager.get('screenshot_ocr.output_folder', 'ocr_data')
-        self._output_folder = os.path.join(os.getcwd(), folder_name)
+        from artalekey.core.database import _get_app_data_dir
+        
+        # 使用应用数据目录而不是当前工作目录
+        self._output_folder = _get_app_data_dir()
         
         # 创建主文件夹和子文件夹
         os.makedirs(self._output_folder, exist_ok=True)

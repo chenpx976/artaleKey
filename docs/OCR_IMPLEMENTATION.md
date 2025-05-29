@@ -47,6 +47,5 @@ ArtaleKey 使用 EasyOCR 进行文本识别，支持英语(en)和繁体中文(ch
 ## 测试方法
 运行应用程序：
 ```bash
-cd /Users/color/projj/github.com/chenpx976/artaleKey
 python -m artalekey
 ``` 

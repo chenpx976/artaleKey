@@ -226,4 +226,48 @@ hiddenimports=[
 - 使用动态路径获取比硬编码路径更可靠
 - 测试时要检查完整的功能，不仅仅是启动
 
+**状态：** ✅ 已解决 (2025-05-29)
+
+### 双击启动闪退问题（路径依赖）
+**问题描述：** 双击启动应用时会闪一下然后立即关闭，但从命令行启动正常。
+
+**原因分析：**
+- 应用使用了相对路径访问数据文件（`os.getcwd()`）
+- 双击启动时，工作目录不是项目目录，导致找不到必要文件
+- 数据库、配置文件、OCR输出目录都依赖当前工作目录
+
+**解决方案：**
+1. **创建应用数据目录函数** - 在`database.py`中添加`_get_app_data_dir()`：
+   ```python
+   def _get_app_data_dir():
+       if hasattr(sys, '_MEIPASS'):  # 打包后的应用
+           base_dir = os.path.dirname(sys.executable)
+           data_dir = os.path.join(os.path.dirname(base_dir), 'ocr_data')
+       else:  # 开发环境
+           module_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+           data_dir = os.path.join(module_dir, 'ocr_data')
+       return data_dir
+   ```
+
+2. **修复数据库路径** - 使用绝对路径替代`os.getcwd()`
+3. **修复OCR输出路径** - `enhanced_ocr.py`中使用应用数据目录
+4. **修复导出路径** - `tabbed_main_window.py`中导出功能使用正确路径
+
+**验证结果：**
+- ✅ 双击启动正常工作
+- ✅ 数据文件正确创建在项目目录
+- ✅ 不依赖启动时的工作目录
+- ✅ 开发和打包环境都兼容
+
+**关键文件修改：**
+- `artalekey/core/database.py` - 添加应用数据目录函数
+- `artalekey/core/enhanced_ocr.py` - 使用应用数据目录
+- `artalekey/ui/tabbed_main_window.py` - 修复导出路径
+
+**经验总结：**
+- 打包的应用不应依赖启动时的工作目录
+- 使用`sys.executable`或`__file__`获取应用位置
+- 检测打包环境：`hasattr(sys, '_MEIPASS')`
+- 数据文件应使用绝对路径或相对于应用位置的路径
+
 **状态：** ✅ 已解决 (2025-05-29) 
