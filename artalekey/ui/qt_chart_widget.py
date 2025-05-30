@@ -109,14 +109,14 @@ class QtVisualizationWidget(QWidget):
         control_group = self._create_control_panel()
         control_group.setMaximumHeight(80)  # 限制控制面板高度
         layout.addWidget(control_group, 0)  # stretch=0，不拉伸
-        
-        # Qt Charts图表 - 主要显示区域
-        chart_group = self._create_qt_chart_panel()
-        layout.addWidget(chart_group, 3)  # stretch=3，主要拉伸区域
-        
+         
         # 经验增长统计表 - 次要显示区域
         stats_group = self._create_stats_panel()
         layout.addWidget(stats_group, 2)  # stretch=2，次要拉伸区域
+        # Qt Charts图表 - 主要显示区域
+        chart_group = self._create_qt_chart_panel()
+        layout.addWidget(chart_group, 3)  # stretch=3，主要拉伸区域
+       
     
     def _create_control_panel(self) -> QGroupBox:
         """创建控制面板"""
