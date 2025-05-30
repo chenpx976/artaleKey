@@ -160,7 +160,7 @@ class HotkeyCard(QGroupBox):
             self.enabled_check.blockSignals(False)
 
 class OCRHotkeyCard(QGroupBox):
-    """OCR快捷键配置卡片 - 参考HotkeyCard设计"""
+    """OCR快捷键配置卡片 - 简化版本"""
     config_changed = pyqtSignal(dict)  # OCR配置变更信号
 
     def __init__(self, parent=None):
@@ -174,9 +174,9 @@ class OCRHotkeyCard(QGroupBox):
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
         
-        # OCR功能启用开关 - 修改默认状态为启用
+        # OCR功能启用开关
         self.enabled_check = QCheckBox("启用OCR功能")
-        self.enabled_check.setChecked(True)  # 修改：默认启用OCR功能
+        self.enabled_check.setChecked(True)  # 默认启用OCR功能
         layout.addWidget(self.enabled_check)
         
         # OCR触发键设置
@@ -192,32 +192,21 @@ class OCRHotkeyCard(QGroupBox):
         key_layout.addWidget(self.key_combo)
         
         # 提示文字
-        hint_label = QLabel("（仅在目标窗口激活时有效，单次触发模式）")
+        hint_label = QLabel("（仅在游戏窗口激活时有效，单次触发模式）")
         hint_label.setStyleSheet("color: gray; font-size: 11px;")
         key_layout.addWidget(hint_label)
         
         key_layout.addStretch()
         layout.addLayout(key_layout)
-        
-        # 简化的高级选项 - 使用基础布局
-        self.save_screenshots_check = QCheckBox("保存截图文件")
-        self.save_screenshots_check.setChecked(True)
-        layout.addWidget(self.save_screenshots_check)
-        
-        self.window_only_check = QCheckBox("仅截取目标窗口")
-        self.window_only_check.setChecked(True)
-        layout.addWidget(self.window_only_check)
 
         # 连接信号 - 使用防抖机制
         self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
         self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
-        self.save_screenshots_check.stateChanged.connect(self._on_config_changed_debounced)
-        self.window_only_check.stateChanged.connect(self._on_config_changed_debounced)
 
     def init_key_options(self):
         """初始化OCR快捷键选项"""
         # OCR常用快捷键
-        ocr_keys = ['s', 'o', 'c', 'r', 'p', 'i', 'u', 'y']
+        ocr_keys = ['c', 's', 'o', 'r', 'p', 'i', 'u', 'y']
         self.key_combo.addItems(ocr_keys)
         
         # 其他字母键
@@ -244,8 +233,9 @@ class OCRHotkeyCard(QGroupBox):
         return {
             'enabled': self.enabled_check.isChecked(),
             'trigger_key': self.key_combo.currentText(),
-            'save_screenshots': self.save_screenshots_check.isChecked(),
-            'capture_window_only': self.window_only_check.isChecked(),
+            'target_window': 'MapleStory Worlds',  # 固定为默认游戏
+            'save_screenshots': False,  # 默认不保存截图
+            'capture_window_only': True,  # 默认只截取窗口
             'output_folder': 'ocr_data'
         }
 
@@ -253,8 +243,6 @@ class OCRHotkeyCard(QGroupBox):
         """设置OCR配置 - 避免触发信号"""
         self.enabled_check.blockSignals(True)
         self.key_combo.blockSignals(True)
-        self.save_screenshots_check.blockSignals(True)
-        self.window_only_check.blockSignals(True)
         
         try:
             # 设置默认值并读取配置
@@ -271,14 +259,9 @@ class OCRHotkeyCard(QGroupBox):
                     self.key_combo.addItem(trigger_key)
                     self.key_combo.setCurrentText(trigger_key)
             
-            self.save_screenshots_check.setChecked(config.get('save_screenshots', False))  # 默认不保存
-            self.window_only_check.setChecked(config.get('capture_window_only', True))   # 默认只截取窗口
-            
         finally:
             self.enabled_check.blockSignals(False)
             self.key_combo.blockSignals(False)
-            self.save_screenshots_check.blockSignals(False)
-            self.window_only_check.blockSignals(False)
         
         # 手动触发一次配置变更，确保状态同步
         self._emit_config_changed()

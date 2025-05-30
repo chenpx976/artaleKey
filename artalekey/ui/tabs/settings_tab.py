@@ -100,16 +100,12 @@ class SettingsTab(BaseTab):
     
     def _create_target_app_group(self):
         """创建目标应用设置组"""
-        app_group = QGroupBox("目标应用设置")
-        app_layout = QVBoxLayout(app_group)
-        
         # 简化的目标应用选择器
         self._target_selector = SimpleTargetSelector()
         self._target_selector.window_filter_enabled.connect(self._on_window_filter_enabled)
         self._target_selector.target_app_changed.connect(self._on_target_app_changed)
-        app_layout.addWidget(self._target_selector)
         
-        self.main_layout.addWidget(app_group)
+        self.main_layout.addWidget(self._target_selector)
     
     def _create_data_management_group(self):
         """创建数据管理组"""
@@ -149,8 +145,8 @@ class SettingsTab(BaseTab):
                 'api_key': self._api_key_input.text().strip() if self._api_key_input else ''
             },
             'window_filter': {
-                'enabled': self._target_selector.is_filter_enabled() if self._target_selector else False,
-                'target_app': self._target_selector.get_target_app() if self._target_selector else ''
+                'enabled': self._target_selector.is_filter_enabled() if self._target_selector else True,
+                'target_app': self._target_selector.get_target_app() if self._target_selector else 'MapleStory Worlds'
             }
         }
         return config
@@ -334,8 +330,8 @@ class SettingsTab(BaseTab):
     
     def get_target_app(self) -> str:
         """获取目标应用"""
-        return self._target_selector.get_target_app() if self._target_selector else ''
+        return self._target_selector.get_target_app() if self._target_selector else 'MapleStory Worlds'
     
     def is_window_filter_enabled(self) -> bool:
         """检查窗口过滤是否启用"""
-        return self._target_selector.is_filter_enabled() if self._target_selector else False 
+        return self._target_selector.is_filter_enabled() if self._target_selector else True 

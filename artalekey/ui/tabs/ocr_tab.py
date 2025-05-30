@@ -130,9 +130,8 @@ class OCRTab(BaseTab):
         
         if enabled:
             trigger_key = ocr_config.get('trigger_key', 'c')
-            target_window = ocr_config.get('target_window', 'MapleStory Worlds')
             self._ocr_status_label.setText(
-                f"✅ OCR功能已启用 (按 {trigger_key.upper()} 键触发，目标: {target_window})"
+                f"✅ OCR功能已启用 (按 {trigger_key.upper()} 键触发)"
             )
             self._ocr_status_label.setStyleSheet(
                 "color: green; font-weight: bold; padding: 8px; "
@@ -162,9 +161,4 @@ class OCRTab(BaseTab):
     def get_trigger_key(self) -> str:
         """获取触发按键"""
         config = self.get_config()
-        return config.get('trigger_key', 'c')
-    
-    def get_target_window(self) -> str:
-        """获取目标窗口"""
-        config = self.get_config()
-        return config.get('target_window', 'MapleStory Worlds') 
+        return config.get('trigger_key', 'c') 

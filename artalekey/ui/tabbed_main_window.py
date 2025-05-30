@@ -20,23 +20,21 @@ class TabbedMainWindow(QMainWindow):
         self.setWindowTitle("ArtaleKey - 快捷键管理器")
         self.setMinimumSize(QSize(500, 400))
         
-        # 初始化核心管理器
-        self.key_simulator = KeySimulator()
-        self.hotkey_listener = HotkeyListener(self)
-        self.screenshot_ocr_manager = EnhancedOCRManager(self)
-        
-        # UI组件
-        self.window_status_widget = None
+        # 初始化组件
         self.tab_manager = None
+        self.hotkey_listener = None
+        self.key_simulator = None
+        self.screenshot_ocr_manager = None
+        self.window_status_widget = None
         
-        # 状态追踪
+        # 运行状态
         self._is_simulation_running = False
         self._window_filter_enabled = False
         
-        # 初始化UI和配置
-        self.init_ui()
-        self.load_configs()
-        self.connect_signals()
+        self._init_ui()
+        self._init_core_components()
+        self._load_and_apply_configs()
+        self._connect_signals()
         
         # 启动热键监听
         self.hotkey_listener.start()
@@ -44,7 +42,7 @@ class TabbedMainWindow(QMainWindow):
         # 记录启动性能
         performance_logger.log_memory_usage("after startup")
         
-    def init_ui(self):
+    def _init_ui(self):
         """初始化UI框架"""
         # 创建中央widget
         central_widget = QWidget()
@@ -71,7 +69,13 @@ class TabbedMainWindow(QMainWindow):
         # 应用自适应样式
         self.update_adaptive_style()
     
-    def load_configs(self):
+    def _init_core_components(self):
+        """初始化核心组件"""
+        self.key_simulator = KeySimulator()
+        self.hotkey_listener = HotkeyListener(self)
+        self.screenshot_ocr_manager = EnhancedOCRManager(self)
+    
+    def _load_and_apply_configs(self):
         """加载所有配置"""
         # 恢复窗口几何尺寸
         config_manager.restore_window_geometry(self)
@@ -89,22 +93,7 @@ class TabbedMainWindow(QMainWindow):
         # 应用核心组件配置
         self._apply_core_configs(all_configs)
     
-    def save_configs(self):
-        """保存所有配置"""
-        # 收集所有标签页配置
-        all_configs = {}
-        for tab_name, tab in self.tab_manager.get_all_tabs().items():
-            all_configs[tab_name] = tab.get_config()
-        
-        # 保存窗口几何信息
-        geometry = self.saveGeometry()
-        if geometry:
-            config_manager.save_window_geometry(geometry)
-        
-        # 保存所有配置
-        config_manager.save_all_ui_configs(all_configs)
-    
-    def connect_signals(self):
+    def _connect_signals(self):
         """连接所有信号"""
         # 连接标签页管理器信号
         signal_manager = self.tab_manager.get_signal_manager()
@@ -207,6 +196,21 @@ class TabbedMainWindow(QMainWindow):
         window_monitor.set_target_processes([target_app])
         window_monitor.start()
     
+    def save_configs(self):
+        """保存所有配置"""
+        # 收集所有标签页配置
+        all_configs = {}
+        for tab_name, tab in self.tab_manager.get_all_tabs().items():
+            all_configs[tab_name] = tab.get_config()
+        
+        # 保存窗口几何信息
+        geometry = self.saveGeometry()
+        if geometry:
+            config_manager.save_window_geometry(geometry)
+        
+        # 保存所有配置
+        config_manager.save_all_ui_configs(all_configs)
+    
     # 样式和事件处理
     def update_adaptive_style(self):
         """更新自适应样式"""
@@ -260,21 +264,11 @@ class TabbedMainWindow(QMainWindow):
         self.save_configs()
     
     def _on_window_filter_enabled(self, enabled: bool):
-        """窗口过滤启用状态变更处理"""
-        settings_tab = self.tab_manager.get_tab('settings')
-        if settings_tab and enabled:
-            target_app = settings_tab.get_target_app()
-            self._setup_window_monitoring(target_app)
-        else:
-            self._window_filter_enabled = False
-            window_monitor.stop()
+        """窗口过滤开关变更处理"""
         self.save_configs()
     
     def _on_target_app_changed(self, target_app: str):
         """目标应用变更处理"""
-        self.hotkey_listener.set_target_window_name(target_app)
-        if self._window_filter_enabled:
-            self._setup_window_monitoring(target_app)
         self.save_configs()
     
     def _on_hotkey_detected(self):

@@ -22,23 +22,23 @@ class ConfigManager(QObject):
             'hotkeys': {
                 'default': {
                     'trigger_key': 'w',
-                    'hold_time': 500,
-                    'interval': 40,
+                    'hold_time': 100,     # 毫秒
+                    'interval': 88,       # 毫秒
                     'enabled': False
                 }
             },
             'ui': {
-                'theme': 'dark',
-                'window_geometry': None,
-                'global_enabled': False
+                'global_enabled': False,
+                'window_position': None,
+                'window_size': None
             },
             'performance': {
                 'enable_logging': True,
                 'log_level': 'INFO'
             },
             'window_filter': {
-                'enabled': True,
-                'target_app': 'MapleStory Worlds'
+                'enabled': True,  # 默认开启
+                'target_app': 'MapleStory Worlds'  # 默认目标应用
             },
             'screenshot_ocr': {
                 'enabled': True,

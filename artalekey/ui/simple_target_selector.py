@@ -8,16 +8,16 @@ from artalekey.core.window_detector import window_monitor
 from artalekey.core.logger import performance_logger
 
 class SimpleTargetSelector(QGroupBox):
-    """简化的目标应用选择器 - 原生外观，支持默认应用"""
+    """简化的目标应用选择器 - 默认开启，支持用户自定义"""
     
     # 信号
     window_filter_enabled = pyqtSignal(bool)  # 窗口过滤启用状态变化
     target_app_changed = pyqtSignal(str)      # 目标应用变更信号
     
     def __init__(self, parent=None):
-        super().__init__("窗口过滤", parent)
+        super().__init__("目标应用设置", parent)
         
-        # 默认目标应用 - 可以直接修改这里
+        # 默认目标应用
         self.default_target_app = "MapleStory Worlds"
         
         self.init_ui()
@@ -32,12 +32,13 @@ class SimpleTargetSelector(QGroupBox):
         window_monitor.add_to_excluded_apps('artalekey')
         
     def init_ui(self):
-        """初始化简化UI"""
+        """初始化UI"""
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
         
-        # 启用开关
+        # 启用开关（默认开启）
         self.enable_check = QCheckBox("启用窗口过滤（只在指定应用中生效）")
+        self.enable_check.setChecked(True)  # 默认开启
         layout.addWidget(self.enable_check)
         
         # 目标应用设置
@@ -55,7 +56,7 @@ class SimpleTargetSelector(QGroupBox):
             "Xcode",
             "Finder"
         ])
-        self.target_combo.setCurrentText(self.default_target_app)
+        self.target_combo.setCurrentText(self.default_target_app)  # 默认选择
         
         target_layout.addWidget(target_label)
         target_layout.addWidget(self.target_combo, 1)
@@ -64,7 +65,7 @@ class SimpleTargetSelector(QGroupBox):
         
         # 快速设置按钮
         quick_layout = QHBoxLayout()
-        self.set_default_btn = QPushButton("使用默认应用")
+        self.set_default_btn = QPushButton("恢复默认")
         self.set_current_btn = QPushButton("设为当前应用")
         
         quick_layout.addWidget(self.set_default_btn)
@@ -74,12 +75,13 @@ class SimpleTargetSelector(QGroupBox):
         layout.addLayout(quick_layout)
         
         # 状态显示
-        self.status_label = QLabel("窗口过滤已禁用")
+        self.status_label = QLabel("")
         self.status_label.setStyleSheet("color: gray; font-size: 12px;")
         layout.addWidget(self.status_label)
         
         # 初始状态
         self.update_enabled_state()
+        self.update_status()
         
     def connect_signals(self):
         """连接信号"""
@@ -101,14 +103,8 @@ class SimpleTargetSelector(QGroupBox):
             target_app = self.target_combo.currentText().strip()
             if target_app:
                 window_monitor.set_target_processes([target_app])
-                self.status_label.setText(f"窗口过滤已启用 - 目标应用: {target_app}")
-                self.status_label.setStyleSheet("color: green; font-size: 12px;")
-            else:
-                self.status_label.setText("窗口过滤已启用 - 请设置目标应用")
-                self.status_label.setStyleSheet("color: orange; font-size: 12px;")
-        else:
-            self.status_label.setText("窗口过滤已禁用")
-            self.status_label.setStyleSheet("color: gray; font-size: 12px;")
+        
+        self.update_status()
         
         # 发送信号
         self.window_filter_enabled.emit(enabled)
@@ -117,8 +113,8 @@ class SimpleTargetSelector(QGroupBox):
         """目标应用改变"""
         if self.enable_check.isChecked() and target_app.strip():
             window_monitor.set_target_processes([target_app.strip()])
-            self.status_label.setText(f"窗口过滤已启用 - 目标应用: {target_app}")
-            self.status_label.setStyleSheet("color: green; font-size: 12px;")
+        
+        self.update_status()
         
         # 发送目标应用变更信号
         self.target_app_changed.emit(target_app.strip())
@@ -147,6 +143,20 @@ class SimpleTargetSelector(QGroupBox):
         self.target_combo.setEnabled(enabled)
         self.set_default_btn.setEnabled(enabled)
         self.set_current_btn.setEnabled(enabled)
+    
+    def update_status(self):
+        """更新状态显示"""
+        if self.enable_check.isChecked():
+            target_app = self.target_combo.currentText().strip()
+            if target_app:
+                self.status_label.setText(f"窗口过滤已启用 - 目标: {target_app}")
+                self.status_label.setStyleSheet("color: green; font-size: 12px;")
+            else:
+                self.status_label.setText("窗口过滤已启用 - 请设置目标应用")
+                self.status_label.setStyleSheet("color: orange; font-size: 12px;")
+        else:
+            self.status_label.setText("窗口过滤已禁用")
+            self.status_label.setStyleSheet("color: gray; font-size: 12px;")
     
     def on_target_window_activated(self):
         """目标窗口激活"""
