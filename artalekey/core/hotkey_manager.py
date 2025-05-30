@@ -146,8 +146,11 @@ class HotkeyListener(QThread):
         # 使用threading.Timer来处理长按检测，避免Qt线程问题
         self._long_press_timer = None
         
+        # 主触发键配置 - 新增
+        self._main_trigger_key = 'w'  # 默认主触发键
+        
         # 优化：预定义需要监听的按键
-        self._monitored_keys = {'w', 's', Key.up}  # 添加's'键监听
+        self._monitored_keys = {self._main_trigger_key, 's', Key.up}  # 添加's'键监听
         
         # OCR快捷键配置
         self._ocr_trigger_key = 'c'  # 默认OCR触发键
@@ -155,6 +158,25 @@ class HotkeyListener(QThread):
         
         # 延迟导入窗口检测器以避免循环导入
         self._window_detector = None
+    
+    def set_main_trigger_key(self, key: str):
+        """设置主触发键"""
+        with self._lock:
+            # 移除旧的监听键
+            if self._main_trigger_key in self._monitored_keys:
+                self._monitored_keys.discard(self._main_trigger_key)
+            
+            # 添加新的监听键
+            self._main_trigger_key = key.lower()
+            self._monitored_keys.add(self._main_trigger_key)
+            
+            # 清除旧的按键状态
+            old_states = dict(self._key_states)
+            for old_key in old_states:
+                if isinstance(old_key, str) and old_key != self._main_trigger_key and old_key != self._ocr_trigger_key:
+                    self._key_states.pop(old_key, None)
+            
+            performance_logger.info(f"Main trigger key set to: {self._main_trigger_key}")
     
     def set_ocr_trigger_key(self, key: str):
         """设置OCR触发键"""
@@ -220,9 +242,9 @@ class HotkeyListener(QThread):
                 
     def _is_combination_pressed(self) -> bool:
         """检查组合键是否被按下"""
-        w_state = self._key_states.get('w', KeyState.RELEASED)
+        main_state = self._key_states.get(self._main_trigger_key, KeyState.RELEASED)
         up_state = self._key_states.get(Key.up, KeyState.RELEASED)
-        return w_state != KeyState.RELEASED and up_state != KeyState.RELEASED
+        return main_state != KeyState.RELEASED and up_state != KeyState.RELEASED
         
     def run(self):
         """优化的监听循环"""
@@ -243,7 +265,7 @@ class HotkeyListener(QThread):
         try:
             key_id = None
             if isinstance(key, KeyCode) and hasattr(key, 'char') and key.char:
-                if key.char in {'w', self._ocr_trigger_key}:  # 处理w和OCR触发键
+                if key.char in {self._main_trigger_key, self._ocr_trigger_key}:  # 处理主触发键和OCR触发键
                     key_id = key.char
             elif key == Key.up:
                 key_id = key
@@ -264,7 +286,7 @@ class HotkeyListener(QThread):
                         else:
                             performance_logger.debug(f"OCR trigger key '{self._ocr_trigger_key}' pressed but target window not active")
                     
-                    # 检查是否需要开始长按计时（w+up组合）
+                    # 检查是否需要开始长按计时（主触发键+up组合）
                     if self._is_combination_pressed():
                         self._start_long_press_timer()
                         
@@ -276,7 +298,7 @@ class HotkeyListener(QThread):
         try:
             key_id = None
             if isinstance(key, KeyCode) and hasattr(key, 'char') and key.char:
-                if key.char in {'w', self._ocr_trigger_key}:
+                if key.char in {self._main_trigger_key, self._ocr_trigger_key}:
                     key_id = key.char
             elif key == Key.up:
                 key_id = key
@@ -288,8 +310,8 @@ class HotkeyListener(QThread):
                 if key_id in self._key_states:
                     self._key_states[key_id] = KeyState.RELEASED
                     
-                    # 只有w+up组合才需要停止长按计时器和发送释放信号
-                    if key_id in {'w', Key.up}:
+                    # 只有主触发键+up组合才需要停止长按计时器和发送释放信号
+                    if key_id in {self._main_trigger_key, Key.up}:
                         # 停止长按计时器
                         self._cancel_long_press_timer()
                         

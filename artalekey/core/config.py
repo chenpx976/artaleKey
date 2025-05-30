@@ -142,11 +142,12 @@ class ConfigManager(QObject):
         old_value = current.get(keys[-1])
         current[keys[-1]] = value
         
-        # 发送变更信号
+        # 发送变更信号（优化信号发送逻辑）
         if old_value != value:
-            # 确保发送的值是字典格式，如果不是则包装成字典
+            # 构建完整的配置路径和值
             signal_value = value if isinstance(value, dict) else {'value': value}
             self.config_changed.emit(key, signal_value)
+            performance_logger.debug(f"配置已变更: {key} = {signal_value}")
         
         # 自动保存
         if auto_save:
@@ -210,6 +211,130 @@ class ConfigManager(QObject):
                     base[key] = value
         
         merge_dict(self._config_cache, new_config)
+
+    # UI配置相关便捷方法
+    def load_all_ui_configs(self) -> Dict[str, Any]:
+        """加载所有UI相关配置"""
+        configs = {}
+        
+        # 加载快速向上配置
+        hotkey_config = self.get_hotkey_config("default")
+        ui_config = self.get_ui_config()
+        configs['quick_up'] = {
+            'global_enabled': ui_config.get('global_enabled', False),
+            'hotkey_config': hotkey_config
+        }
+        
+        # 加载OCR配置
+        ocr_config = self.get('screenshot_ocr', self.default_config['screenshot_ocr'].copy())
+        configs['ocr'] = ocr_config
+        
+        # 加载可视化配置
+        configs['visualization'] = {}
+        
+        # 加载设置配置
+        llm_config = self.get('llm', self.default_config['llm'].copy())
+        window_filter_config = self.get('window_filter', self.default_config['window_filter'].copy())
+        
+        configs['settings'] = {
+            'llm': llm_config,
+            'window_filter': window_filter_config
+        }
+        
+        # 加载UI配置
+        configs['ui'] = ui_config
+        
+        return configs
+    
+    def save_all_ui_configs(self, configs: Dict[str, Any]):
+        """保存所有UI相关配置"""
+        # 保存快速向上配置
+        if 'quick_up' in configs:
+            quick_up_config = configs['quick_up']
+            if 'hotkey_config' in quick_up_config:
+                self.set_hotkey_config("default", quick_up_config['hotkey_config'], auto_save=False)
+        
+        # 保存OCR配置
+        if 'ocr' in configs:
+            self.set('screenshot_ocr', configs['ocr'], auto_save=False)
+        
+        # 保存设置配置
+        if 'settings' in configs:
+            settings_config = configs['settings']
+            if 'llm' in settings_config:
+                self.set('llm', settings_config['llm'], auto_save=False)
+            if 'window_filter' in settings_config:
+                self.set('window_filter', settings_config['window_filter'], auto_save=False)
+        
+        # 保存UI配置
+        if 'ui' in configs:
+            ui_config = configs['ui'].copy()
+            # 如果有全局启用状态，从quick_up配置中获取
+            if 'quick_up' in configs:
+                ui_config['global_enabled'] = configs['quick_up'].get('global_enabled', False)
+            self.set_ui_config(ui_config, auto_save=False)
+        
+        # 统一保存
+        self.save_config()
+    
+    def get_tab_config(self, tab_name: str) -> Dict[str, Any]:
+        """获取指定标签页的配置"""
+        all_configs = self.load_all_ui_configs()
+        default_configs = self._get_default_tab_configs()
+        return all_configs.get(tab_name, default_configs.get(tab_name, {}))
+    
+    def save_tab_config(self, tab_name: str, config: Dict[str, Any]):
+        """保存指定标签页的配置"""
+        all_configs = self.load_all_ui_configs()
+        all_configs[tab_name] = config
+        self.save_all_ui_configs(all_configs)
+    
+    def save_window_geometry(self, geometry):
+        """保存窗口几何信息"""
+        ui_config = self.get_ui_config()
+        if geometry:
+            from PyQt6.QtCore import QByteArray
+            if isinstance(geometry, QByteArray):
+                ui_config['window_geometry'] = geometry.toBase64().data().decode('utf-8')
+            else:
+                ui_config['window_geometry'] = geometry
+            self.set_ui_config(ui_config)
+    
+    def restore_window_geometry(self, window):
+        """恢复窗口几何信息"""
+        ui_config = self.get_ui_config()
+        if ui_config.get('window_geometry'):
+            try:
+                from PyQt6.QtCore import QByteArray
+                geometry_data = ui_config['window_geometry']
+                if isinstance(geometry_data, str):
+                    # 从base64字符串恢复QByteArray
+                    geometry = QByteArray.fromBase64(geometry_data.encode('utf-8'))
+                    window.restoreGeometry(geometry)
+                else:
+                    # 兼容旧格式
+                    window.restoreGeometry(geometry_data)
+                return True
+            except Exception as e:
+                performance_logger.error(f"恢复窗口几何信息失败: {e}")
+                return False
+        return False
+    
+    def _get_default_tab_configs(self) -> Dict[str, Any]:
+        """获取默认标签页配置"""
+        return {
+            'quick_up': {
+                'global_enabled': False,
+                'hotkey_config': self.default_config['hotkeys']['default'].copy()
+            },
+            'ocr': self.default_config['screenshot_ocr'].copy(),
+            'visualization': {},
+            'settings': {
+                'llm': self.default_config['llm'].copy(),
+                'window_filter': self.default_config['window_filter'].copy()
+            },
+            'ui': self.default_config['ui'].copy()
+        }
 
 # 全局配置管理器实例
 config_manager = ConfigManager() 
