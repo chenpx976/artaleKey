@@ -630,6 +630,30 @@ class GameDataDatabase:
         except Exception as e:
             performance_logger.error(f"获取唯一等级失败: {e}")
             return []
+    
+    def get_unique_maps(self) -> List[str]:
+        """获取所有唯一的地图名称"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT DISTINCT map_name 
+                    FROM game_data 
+                    WHERE map_name IS NOT NULL 
+                    AND map_name != ''
+                    ORDER BY map_name
+                ''')
+                
+                rows = cursor.fetchall()
+                maps = [row[0] for row in rows if row[0] and row[0].strip()]
+                
+                performance_logger.debug(f"获取到 {len(maps)} 个唯一地图: {maps}")
+                return maps
+                
+        except Exception as e:
+            performance_logger.error(f"获取唯一地图失败: {e}")
+            return []
 
 # 全局数据库实例
 game_db = GameDataDatabase() 

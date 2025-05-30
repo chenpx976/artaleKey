@@ -30,7 +30,9 @@ class QtVisualizationWidget(QWidget):
         self._refresh_timer.timeout.connect(self._delayed_refresh)
         
         self.init_ui()
-        # 延迟刷新，让界面先显示
+        
+        # 延迟初始化：先获取最新数据设置过滤条件，再刷新数据
+        QTimer.singleShot(500, self._init_with_latest_data)  # 0.5秒后初始化
         QTimer.singleShot(1000, self.refresh_data)  # 1秒后刷新一次
     
     def _convert_to_beijing_time(self, time_str: str) -> datetime:
@@ -137,6 +139,13 @@ class QtVisualizationWidget(QWidget):
         self.level_combo.currentIndexChanged.connect(self.on_level_filter_changed)
         layout.addWidget(self.level_combo)
         
+        # 地图过滤 (新增)
+        layout.addWidget(QLabel("地图过滤:"))
+        self.map_combo = QComboBox()
+        self.map_combo.addItem("全部地图", None)
+        self.map_combo.currentIndexChanged.connect(self.on_map_filter_changed)
+        layout.addWidget(self.map_combo)
+        
         # 时间范围
         layout.addWidget(QLabel("时间范围:"))
         self.time_range_combo = QComboBox()
@@ -195,11 +204,12 @@ class QtVisualizationWidget(QWidget):
         group = QGroupBox("经验增长记录")
         layout = QVBoxLayout(group)
         
-        # 创建表格
+        # 创建表格 - 增加更多有用的列
         self.stats_table = QTableWidget()
-        self.stats_table.setColumnCount(7)
+        self.stats_table.setColumnCount(10)  # 从7列增加到10列
         self.stats_table.setHorizontalHeaderLabels([
-            "起始时间", "结束时间", "间隔时间", "经验增长", "等级", "预估十分钟", "结束经验值"
+            "起始时间", "结束时间", "间隔时间", "经验增长", "等级", 
+            "地图地点", "效率评级", "预估十分钟", "时段", "结束经验值"
         ])
         
         # 关键：设置表格的大小策略，让它能够正确拉伸
@@ -256,6 +266,10 @@ class QtVisualizationWidget(QWidget):
         """获取选择的等级过滤"""
         return self.level_combo.currentData()
     
+    def get_selected_map(self):
+        """获取选择的地图过滤"""
+        return self.map_combo.currentData()
+    
     def refresh_data(self):
         """刷新数据"""
         if self._refreshing:
@@ -273,6 +287,7 @@ class QtVisualizationWidget(QWidget):
         try:
             self._update_character_combo()
             self._update_level_combo()
+            self._update_map_combo()
             self.refresh_qt_chart()
             self.refresh_stats_table()
         finally:
@@ -318,6 +333,27 @@ class QtVisualizationWidget(QWidget):
         except Exception as e:
             performance_logger.error(f"更新等级下拉框失败: {e}")
     
+    def _update_map_combo(self):
+        """更新地图下拉框"""
+        try:
+            current_selection = self.get_selected_map()
+            self.map_combo.clear()
+            self.map_combo.addItem("全部地图", None)
+            
+            maps = game_db.get_unique_maps()
+            for map_name in maps:
+                if map_name and map_name.strip():  # 过滤空地图名
+                    self.map_combo.addItem(map_name, map_name)
+            
+            # 恢复之前的选择
+            if current_selection:
+                for i in range(self.map_combo.count()):
+                    if self.map_combo.itemData(i) == current_selection:
+                        self.map_combo.setCurrentIndex(i)
+                        break
+        except Exception as e:
+            performance_logger.error(f"更新地图下拉框失败: {e}")
+    
     def refresh_qt_chart(self):
         """刷新Qt Charts图表"""
         try:
@@ -327,10 +363,12 @@ class QtVisualizationWidget(QWidget):
             hours_limit = self.get_time_range_hours()
             level_filter = self.get_selected_level()
             character_filter = self.get_selected_character()
+            map_filter = self.get_selected_map()
             
             data = self._get_filtered_visualization_data(
                 character_filter=character_filter,
                 level_filter=level_filter,
+                map_filter=map_filter,
                 hours_limit=hours_limit
             )
             
@@ -470,8 +508,8 @@ class QtVisualizationWidget(QWidget):
             self.chart_status_label.setText(f"图表加载失败: {e}")
             self.chart.setTitle("")
     
-    def _get_filtered_visualization_data(self, character_filter=None, level_filter=None, hours_limit=24):
-        """获取带角色和等级过滤的可视化数据"""
+    def _get_filtered_visualization_data(self, character_filter=None, level_filter=None, map_filter=None, hours_limit=24):
+        """获取带角色、等级和地图过滤的可视化数据"""
         try:
             # 获取原始数据
             data = game_db.get_data_history(1000)
@@ -512,6 +550,12 @@ class QtVisualizationWidget(QWidget):
                         if level != level_filter:
                             continue
                     
+                    # 地图过滤 (新增)
+                    if map_filter:
+                        map_name = record.get('map_name', '')
+                        if map_name != map_filter:
+                            continue
+                    
                     # 经验值过滤
                     experience_data = record.get('experience', {})
                     if isinstance(experience_data, str):
@@ -540,10 +584,11 @@ class QtVisualizationWidget(QWidget):
         try:
             self.stats_status_label.setText("正在加载统计数据...")
             
-            # 获取指定角色和等级的经验增长记录
+            # 获取指定角色、等级和地图的经验增长记录
             character_filter = self.get_selected_character()
             level_filter = self.get_selected_level()
-            exp_growth_data = self._get_exp_growth_data(character_filter, level_filter)
+            map_filter = self.get_selected_map()
+            exp_growth_data = self._get_exp_growth_data(character_filter, level_filter, map_filter)
             
             # 设置表格行数
             self.stats_table.setRowCount(len(exp_growth_data))
@@ -556,33 +601,70 @@ class QtVisualizationWidget(QWidget):
             for row, growth in enumerate(exp_growth_data):
                 # 起始时间
                 start_time = self._format_time_hms(growth['start_time'])
-                self.stats_table.setItem(row, 0, QTableWidgetItem(start_time))
+                start_item = QTableWidgetItem(start_time)
+                start_item.setToolTip(f"起始时间: {start_time}")
+                self.stats_table.setItem(row, 0, start_item)
                 
                 # 结束时间
                 end_time = self._format_time_hms(growth['end_time'])
-                self.stats_table.setItem(row, 1, QTableWidgetItem(end_time))
+                end_item = QTableWidgetItem(end_time)
+                end_item.setToolTip(f"结束时间: {end_time}")
+                self.stats_table.setItem(row, 1, end_item)
                 
                 # 间隔时间
                 interval = self._format_interval(growth['interval_seconds'])
-                self.stats_table.setItem(row, 2, QTableWidgetItem(interval))
+                interval_item = QTableWidgetItem(interval)
+                interval_item.setToolTip(f"间隔: {interval} ({growth['interval_seconds']}秒)")
+                self.stats_table.setItem(row, 2, interval_item)
                 
                 # 经验增长
                 exp_gain = f"{growth['exp_gain']:,}"
-                self.stats_table.setItem(row, 3, QTableWidgetItem(exp_gain))
+                exp_gain_item = QTableWidgetItem(exp_gain)
+                # 根据经验增长量设置颜色
+                if growth['exp_gain'] >= 5000:
+                    exp_gain_item.setBackground(QColor(144, 238, 144))  # 浅绿色
+                elif growth['exp_gain'] >= 2000:
+                    exp_gain_item.setBackground(QColor(255, 255, 224))  # 浅黄色
+                self.stats_table.setItem(row, 3, exp_gain_item)
                 
                 # 等级
                 level = f"{growth['level']}"
                 self.stats_table.setItem(row, 4, QTableWidgetItem(level))
                 
+                # 地图地点
+                map_name = growth.get('map_name', '未知地图')
+                map_item = QTableWidgetItem(map_name)
+                map_item.setToolTip(f"地图: {map_name}")
+                self.stats_table.setItem(row, 5, map_item)
+                
+                # 效率评级
+                efficiency_rating = self._calculate_efficiency_rating(growth['exp_gain'], growth['interval_seconds'])
+                efficiency_item = QTableWidgetItem(efficiency_rating)
+                # 根据效率设置颜色
+                if efficiency_rating in ['S', 'A']:
+                    efficiency_item.setBackground(QColor(144, 238, 144))  # 浅绿色
+                elif efficiency_rating in ['B']:
+                    efficiency_item.setBackground(QColor(255, 255, 224))  # 浅黄色
+                elif efficiency_rating in ['D', 'F']:
+                    efficiency_item.setBackground(QColor(255, 182, 193))  # 浅红色
+                efficiency_item.setToolTip(f"效率评级: {efficiency_rating}")
+                self.stats_table.setItem(row, 6, efficiency_item)
+                
                 # 预估十分钟
                 avg_exp_per_minute = growth['exp_gain'] / (growth['interval_seconds'] / 60)
                 estimated_ten_minutes_exp = avg_exp_per_minute * 10
                 estimated_exp_value = f"{estimated_ten_minutes_exp:,.0f}"
-                self.stats_table.setItem(row, 5, QTableWidgetItem(estimated_exp_value))
+                self.stats_table.setItem(row, 7, QTableWidgetItem(estimated_exp_value))
+                
+                # 时段标识
+                time_period = self._get_time_period(growth['end_time'])
+                time_period_item = QTableWidgetItem(time_period)
+                time_period_item.setToolTip(f"时间段: {time_period}")
+                self.stats_table.setItem(row, 8, time_period_item)
                 
                 # 结束经验值
                 end_exp_value = f"{growth['end_exp_value']:,}"
-                self.stats_table.setItem(row, 6, QTableWidgetItem(end_exp_value))
+                self.stats_table.setItem(row, 9, QTableWidgetItem(end_exp_value))
             
             # 自动调整列宽
             self.stats_table.resizeColumnsToContents()
@@ -592,16 +674,65 @@ class QtVisualizationWidget(QWidget):
             avg_interval = sum(growth['interval_seconds'] for growth in exp_growth_data) / len(exp_growth_data)
             character_text = character_filter if character_filter else "全角色"
             level_text = f"等级{level_filter}" if level_filter else "全等级"
+            
+            # 计算效率统计
+            high_efficiency_count = sum(1 for growth in exp_growth_data 
+                                       if self._calculate_efficiency_rating(growth['exp_gain'], growth['interval_seconds']) in ['S', 'A'])
+            
             self.stats_status_label.setText(
                 f"{character_text} {level_text}增长记录: {len(exp_growth_data)}条, 总经验增长: {total_exp_gain:,}, "
-                f"平均间隔: {self._format_interval(avg_interval)}"
+                f"平均间隔: {self._format_interval(avg_interval)}, 高效率记录: {high_efficiency_count}条"
             )
             
         except Exception as e:
             performance_logger.error(f"刷新统计表格失败: {e}")
             self.stats_status_label.setText(f"统计数据加载失败: {e}")
     
-    def _get_exp_growth_data(self, character_filter=None, level_filter=None):
+    def _calculate_efficiency_rating(self, exp_gain: int, interval_seconds: int) -> str:
+        """计算效率评级"""
+        try:
+            if interval_seconds <= 0:
+                return "F"
+            
+            # 计算每分钟经验获取量
+            exp_per_minute = exp_gain / (interval_seconds / 60)
+            
+            # 评级标准（根据实际游戏经验调整）
+            if exp_per_minute >= 2000:
+                return "S"  # 超级高效
+            elif exp_per_minute >= 1500:
+                return "A"  # 高效
+            elif exp_per_minute >= 1000:
+                return "B"  # 良好
+            elif exp_per_minute >= 500:
+                return "C"  # 一般
+            elif exp_per_minute >= 200:
+                return "D"  # 较低
+            else:
+                return "F"  # 低效
+        
+        except Exception:
+            return "N/A"
+
+    def _get_time_period(self, time_str: str) -> str:
+        """获取时间段标识"""
+        try:
+            beijing_dt = self._convert_to_beijing_time(time_str)
+            hour = beijing_dt.hour
+            
+            if 6 <= hour < 12:
+                return "🌅 上午"
+            elif 12 <= hour < 18:
+                return "☀️ 下午"
+            elif 18 <= hour < 24:
+                return "🌙 晚上"
+            else:
+                return "🌃 深夜"
+        
+        except Exception:
+            return "❓ 未知"
+    
+    def _get_exp_growth_data(self, character_filter=None, level_filter=None, map_filter=None):
         """获取经验增长数据"""
         try:
             # 从数据库获取数据
@@ -625,6 +756,12 @@ class QtVisualizationWidget(QWidget):
                 # 检查等级过滤
                 if level_filter is not None and level != level_filter:
                     continue
+                
+                # 检查地图过滤 (新增)
+                if map_filter is not None:
+                    map_name = record.get('map_name')
+                    if map_name != map_filter:
+                        continue
                 
                 # 检查数据有效性
                 if (level and isinstance(level, int) and level > 0 and 
@@ -695,17 +832,21 @@ class QtVisualizationWidget(QWidget):
                     
                     # 只记录合理的时间间隔（1秒到24小时之间）
                     if 1 <= interval_seconds <= 86400:
+                        # 获取地图信息（优先使用结束时的地图）
+                        map_name = curr_record.get('map_name') or prev_record.get('map_name') or '未知地图'
+                        
                         growth_record = {
                             'start_time': prev_record['created_at'],
                             'end_time': curr_record['created_at'],
                             'interval_seconds': interval_seconds,
                             'exp_gain': exp_gain,
                             'level': level,
-                            'end_exp_value': curr_value
+                            'end_exp_value': curr_value,
+                            'map_name': map_name,  # 新增地图信息
                         }
                         growth_records.append(growth_record)
                         
-                        performance_logger.debug(f"记录经验增长: 等级{level}, 从{prev_value:,}增长到{curr_value:,}, 增长{exp_gain:,}, 间隔{interval_seconds}秒")
+                        performance_logger.debug(f"记录经验增长: 等级{level}, 地图{map_name}, 从{prev_value:,}增长到{curr_value:,}, 增长{exp_gain:,}, 间隔{interval_seconds}秒")
                 
             except Exception as e:
                 performance_logger.warning(f"处理经验增长记录失败: {e}")
@@ -723,4 +864,53 @@ class QtVisualizationWidget(QWidget):
     
     def on_time_range_changed(self):
         """时间范围变更"""
-        self.refresh_data() 
+        self.refresh_data()
+    
+    def on_map_filter_changed(self):
+        """地图筛选变更"""
+        self.refresh_data()
+    
+    def _init_with_latest_data(self):
+        """使用最新数据初始化过滤条件"""
+        try:
+            # 获取最新游戏数据
+            latest_data = game_db.get_latest_data()
+            if latest_data:
+                character_name = latest_data.get('character_name')
+                level = latest_data.get('level')
+                
+                performance_logger.info(f"🎯 使用最新数据初始化过滤条件: 角色={character_name}, 等级={level}")
+                
+                # 更新下拉框选项
+                self._update_character_combo()
+                self._update_level_combo()
+                
+                # 自动设置角色过滤
+                if character_name:
+                    for i in range(self.character_combo.count()):
+                        if self.character_combo.itemData(i) == character_name:
+                            self.character_combo.setCurrentIndex(i)
+                            performance_logger.info(f"✅ 自动设置角色过滤为: {character_name}")
+                            break
+                
+                # 自动设置等级过滤
+                if level and isinstance(level, int) and level > 0:
+                    for i in range(self.level_combo.count()):
+                        if self.level_combo.itemData(i) == level:
+                            self.level_combo.setCurrentIndex(i)
+                            performance_logger.info(f"✅ 自动设置等级过滤为: {level}")
+                            break
+                
+                # 自动设置地图过滤（优先显示最新地图）
+                map_name = latest_data.get('map_name')
+                if map_name:
+                    # 更新地图下拉框
+                    self._update_map_combo()
+                    for i in range(self.map_combo.count()):
+                        if self.map_combo.itemData(i) == map_name:
+                            self.map_combo.setCurrentIndex(i)
+                            performance_logger.info(f"✅ 自动设置地图过滤为: {map_name}")
+                            break
+        
+        except Exception as e:
+            performance_logger.error(f"使用最新数据初始化过滤条件失败: {e}") 
