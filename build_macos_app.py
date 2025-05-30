@@ -9,7 +9,6 @@ import sys
 import subprocess
 import shutil
 from pathlib import Path
-import matplotlib
 
 def check_dependencies():
     """检查打包依赖"""

@@ -13,7 +13,7 @@ from artalekey.core.database import game_db
 from artalekey.core.logger import performance_logger
 
 class QtVisualizationWidget(QWidget):
-    """Qt原生图表的经验获取效率可视化组件 - 替代matplotlib"""
+    """Qt原生图表的经验获取效率可视化组件"""
     
     refresh_requested = pyqtSignal()
     
