@@ -1,9 +1,8 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QLabel, QPushButton
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QResizeEvent
 
 from artalekey.ui.tabs import TabManager
-from artalekey.ui.window_status_widget import WindowStatusWidget
 from artalekey.ui.simple_styles import get_adaptive_style
 from artalekey.core.config import config_manager
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
@@ -18,14 +17,20 @@ class TabbedMainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("ArtaleKey - 快捷键管理器")
-        self.setMinimumSize(QSize(500, 400))
+        
+        # 设置窗口最小尺寸和初始尺寸
+        self.setMinimumSize(QSize(700, 520))  # 微调最小尺寸
+        self.resize(QSize(800, 650))  # 设置合适的初始尺寸
         
         # 初始化组件
         self.tab_manager = None
         self.hotkey_listener = None
         self.key_simulator = None
         self.screenshot_ocr_manager = None
-        self.window_status_widget = None
+        
+        # 窗口状态相关组件
+        self.window_status_label = None
+        self.activate_button = None
         
         # 运行状态
         self._is_simulation_running = False
@@ -53,21 +58,56 @@ class TabbedMainWindow(QMainWindow):
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
         
-        # 窗口状态组件（置顶显示）
-        self.window_status_widget = WindowStatusWidget()
-        main_layout.addWidget(self.window_status_widget)
-        
         # 创建标签页容器和管理器
         tab_widget = QTabWidget()
         self.tab_manager = TabManager(tab_widget, self)
         self.tab_manager.initialize_tabs(self)
         main_layout.addWidget(tab_widget)
         
-        # 状态栏
-        self.statusBar().showMessage("就绪")
+        # 状态栏（包含窗口状态和激活按钮）
+        self._init_status_bar()
         
         # 应用自适应样式
         self.update_adaptive_style()
+    
+    def _init_status_bar(self):
+        """初始化状态栏"""
+        status_bar = self.statusBar()
+        
+        # 窗口状态标签
+        self.window_status_label = QLabel("窗口状态: 检测中...")
+        self.window_status_label.setStyleSheet("color: gray; margin-right: 10px;")
+        status_bar.addWidget(self.window_status_label)
+        
+        # 中间的弹性空间
+        status_bar.addWidget(QLabel(), 1)  # 添加可拉伸的widget
+        
+        # 激活窗口按钮
+        self.activate_button = QPushButton("激活窗口")
+        self.activate_button.clicked.connect(self._on_activate_window_clicked)
+        self.activate_button.setMaximumWidth(80)
+        self.activate_button.setMaximumHeight(25)
+        self.activate_button.setStyleSheet("""
+            QPushButton {
+                font-size: 11px;
+                padding: 4px 8px;
+                border-radius: 3px;
+                background-color: #007ACC;
+                color: white;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #005999;
+            }
+            QPushButton:disabled {
+                background-color: #CCCCCC;
+                color: #666666;
+            }
+        """)
+        status_bar.addPermanentWidget(self.activate_button)
+        
+        # 初始化窗口监控
+        self._init_window_monitoring()
     
     def _init_core_components(self):
         """初始化核心组件"""
@@ -107,11 +147,6 @@ class TabbedMainWindow(QMainWindow):
         
         # 连接核心组件信号
         self._connect_core_signals()
-        
-        # 连接窗口状态组件信号
-        self.window_status_widget.activate_window_requested.connect(
-            self._on_activate_window_requested
-        )
     
     def _connect_quick_up_signals(self):
         """连接快速向上标签页信号"""
@@ -321,16 +356,12 @@ class TabbedMainWindow(QMainWindow):
     
     def _on_game_data_extracted(self, game_data: dict):
         """游戏数据提取完成处理"""
-        # 刷新窗口状态组件
-        self.window_status_widget.refresh_data()
-        
-        # 延迟刷新可视化组件
-        visualization_tab = self.tab_manager.get_tab('visualization')
-        if visualization_tab:
-            QTimer.singleShot(500, visualization_tab.refresh_data)
+        # 刷新OCR标签页中的可视化组件
+        ocr_tab = self.tab_manager.get_tab('ocr')
+        if ocr_tab:
+            QTimer.singleShot(500, ocr_tab.refresh_visualization_data)
         
         # 更新OCR状态
-        ocr_tab = self.tab_manager.get_tab('ocr')
         if ocr_tab:
             ocr_tab.update_ocr_status("success", game_data=game_data)
         
@@ -353,9 +384,11 @@ class TabbedMainWindow(QMainWindow):
             ocr_tab.update_ocr_status("error", error_message)
         self.statusBar().showMessage(f"OCR处理失败: {error_message}")
     
-    def _on_activate_window_requested(self):
-        """激活窗口请求处理"""
-        self.statusBar().showMessage("正在尝试激活MapleStory Worlds窗口...")
+    def _on_activate_window_clicked(self):
+        """激活窗口按钮点击"""
+        from artalekey.core.window_status import window_status_monitor
+        window_status_monitor.activate_target_window()
+        self.statusBar().showMessage("正在尝试激活MapleStory Worlds窗口...", 3000) 
     
     # 辅助方法
     def _format_experience(self, experience) -> str:
@@ -426,4 +459,41 @@ class TabbedMainWindow(QMainWindow):
             LLMProcessor._cleanup_thread_pool()
             performance_logger.info("LLM处理器线程池已清理")
         except Exception as e:
-            performance_logger.warning(f"清理LLM处理器线程池失败: {e}") 
+            performance_logger.warning(f"清理LLM处理器线程池失败: {e}")
+    
+    def _init_window_monitoring(self):
+        """初始化窗口监控"""
+        from artalekey.core.window_status import window_status_monitor
+        
+        # 连接窗口状态信号
+        window_status_monitor.window_status_changed.connect(self._update_window_status)
+        window_status_monitor.window_found_changed.connect(self._update_window_found)
+        
+        # 启动窗口状态监控
+        window_status_monitor.start_monitoring()
+        
+        # 初始状态更新
+        self._update_window_status(False)
+    
+    def _update_window_status(self, is_active: bool):
+        """更新窗口激活状态"""
+        if is_active:
+            self.window_status_label.setText("窗口状态: ✅ 已激活")
+            self.window_status_label.setStyleSheet("color: green; font-weight: bold; margin-right: 10px;")
+            self.activate_button.setEnabled(False)
+        else:
+            from artalekey.core.window_status import window_status_monitor
+            if window_status_monitor.is_window_found():
+                self.window_status_label.setText("窗口状态: ⚠️ 未激活") 
+                self.window_status_label.setStyleSheet("color: orange; font-weight: bold; margin-right: 10px;")
+                self.activate_button.setEnabled(True)
+            else:
+                self.window_status_label.setText("窗口状态: ❌ 未运行")
+                self.window_status_label.setStyleSheet("color: red; font-weight: bold; margin-right: 10px;")
+                self.activate_button.setEnabled(False)
+    
+    def _update_window_found(self, is_found: bool):
+        """更新窗口存在状态"""
+        from artalekey.core.window_status import window_status_monitor
+        # 当窗口存在状态变化时，重新更新激活状态显示
+        self._update_window_status(window_status_monitor.is_window_active()) 

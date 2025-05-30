@@ -4,7 +4,6 @@ from PyQt6.QtWidgets import QTabWidget
 from artalekey.ui.tabs.base_tab import BaseTab, TabSignalManager
 from artalekey.ui.tabs.quick_up_tab import QuickUpTab
 from artalekey.ui.tabs.ocr_tab import OCRTab
-from artalekey.ui.tabs.visualization_tab import VisualizationTab
 from artalekey.ui.tabs.settings_tab import SettingsTab
 
 
@@ -14,7 +13,6 @@ class TabFactory:
     TAB_CONFIGS = [
         {"name": "quick_up", "title": "快速向上", "class": QuickUpTab},
         {"name": "ocr", "title": "OCR识别", "class": OCRTab},
-        {"name": "visualization", "title": "可视化", "class": VisualizationTab},
         {"name": "settings", "title": "设置", "class": SettingsTab},
     ]
     
@@ -109,7 +107,6 @@ __all__ = [
     'TabSignalManager', 
     'QuickUpTab',
     'OCRTab',
-    'VisualizationTab',
     'SettingsTab',
     'TabFactory',
     'TabManager'

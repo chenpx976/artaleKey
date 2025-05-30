@@ -10,9 +10,10 @@ class HotkeyCard(QGroupBox):
     """简化的热键配置卡片 - 原生外观"""
     config_changed = pyqtSignal(str, dict)  # 配置变更信号
 
-    def __init__(self, hotkey_id: str, parent=None):
+    def __init__(self, hotkey_id: str, parent=None, enable_internal_switch: bool = True):
         super().__init__("热键设置", parent)
         self.hotkey_id = hotkey_id
+        self.enable_internal_switch = enable_internal_switch  # 控制是否显示内部开关
         self._debounce_timer = QTimer()  # 防抖计时器
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._emit_config_changed)
@@ -84,16 +85,20 @@ class HotkeyCard(QGroupBox):
         interval_layout.addWidget(self.interval_slider)
         layout.addLayout(interval_layout)
 
-        # 启用状态
-        self.enabled_check = QCheckBox("启用此功能")
-        self.enabled_check.setChecked(False)  # 默认关闭
-        layout.addWidget(self.enabled_check)
+        # 启用状态（只有在enable_internal_switch为True时才显示）
+        if self.enable_internal_switch:
+            self.enabled_check = QCheckBox("启用此功能")
+            self.enabled_check.setChecked(False)  # 默认关闭
+            layout.addWidget(self.enabled_check)
+            # 连接信号
+            self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
+        else:
+            self.enabled_check = None
 
         # 连接信号 - 使用防抖机制
         self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
         self.hold_slider.valueChanged.connect(self._on_hold_time_changed)
         self.interval_slider.valueChanged.connect(self._on_interval_changed)
-        self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
 
     def init_key_options(self):
         """初始化按键选项 - 优化选项列表"""
@@ -132,7 +137,7 @@ class HotkeyCard(QGroupBox):
             'trigger_key': self.key_combo.currentText(),
             'hold_time': self.hold_slider.value(),
             'interval': self.interval_slider.value(),
-            'enabled': self.enabled_check.isChecked()
+            'enabled': self.enabled_check.isChecked() if self.enabled_check else False
         }
 
     def set_config(self, config: dict):
@@ -140,7 +145,8 @@ class HotkeyCard(QGroupBox):
         self.key_combo.blockSignals(True)
         self.hold_slider.blockSignals(True)
         self.interval_slider.blockSignals(True)
-        self.enabled_check.blockSignals(True)
+        if self.enabled_check:
+            self.enabled_check.blockSignals(True)
         
         try:
             if 'trigger_key' in config:
@@ -152,12 +158,14 @@ class HotkeyCard(QGroupBox):
                 self.interval_slider.setValue(config['interval'])
                 self.interval_value_label.setText(f"{config['interval']}ms")
             if 'enabled' in config:
-                self.enabled_check.setChecked(config['enabled'])
+                if self.enabled_check:
+                    self.enabled_check.setChecked(config['enabled'])
         finally:
             self.key_combo.blockSignals(False)
             self.hold_slider.blockSignals(False)
             self.interval_slider.blockSignals(False)
-            self.enabled_check.blockSignals(False)
+            if self.enabled_check:
+                self.enabled_check.blockSignals(False)
 
 class OCRHotkeyCard(QGroupBox):
     """OCR快捷键配置卡片 - 简化版本"""

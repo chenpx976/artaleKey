@@ -47,12 +47,6 @@ class WindowStatusWidget(QWidget):
         self.status_label.setFont(QFont("", 12, QFont.Weight.Bold))
         window_status_layout.addWidget(self.status_label)
         
-        # 激活按钮
-        self.activate_button = QPushButton("激活窗口")
-        self.activate_button.clicked.connect(self._on_activate_clicked)
-        self.activate_button.setMaximumWidth(100)
-        window_status_layout.addWidget(self.activate_button)
-        
         window_status_layout.addStretch()
         status_layout.addLayout(window_status_layout)
         
@@ -86,6 +80,35 @@ class WindowStatusWidget(QWidget):
         data_layout.addWidget(self.stats_label)
         
         layout.addWidget(data_group)
+        
+        # 底部操作区域 - 将激活按钮放在右下角
+        bottom_layout = QHBoxLayout()
+        bottom_layout.addStretch()  # 左侧弹性空间
+        
+        # 激活按钮
+        self.activate_button = QPushButton("激活窗口")
+        self.activate_button.clicked.connect(self._on_activate_clicked)
+        self.activate_button.setMaximumWidth(100)
+        self.activate_button.setStyleSheet("""
+            QPushButton {
+                font-weight: bold;
+                padding: 8px 16px;
+                border-radius: 4px;
+                background-color: #007ACC;
+                color: white;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #005999;
+            }
+            QPushButton:disabled {
+                background-color: #CCCCCC;
+                color: #666666;
+            }
+        """)
+        bottom_layout.addWidget(self.activate_button)
+        
+        layout.addLayout(bottom_layout)
         
         # 设置整体样式
         self.setStyleSheet("""

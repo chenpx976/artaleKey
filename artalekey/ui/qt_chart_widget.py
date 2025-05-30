@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QComboBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView
+    QComboBox, QGroupBox, QTableWidget, QTableWidgetItem, QHeaderView, QSizePolicy
 )
 from PyQt6.QtCore import QTimer, pyqtSignal, QSettings, QDateTime, Qt, QMargins
 from PyQt6.QtGui import QFont, QPainter, QBrush, QColor
@@ -105,17 +105,18 @@ class QtVisualizationWidget(QWidget):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
         
-        # 控制面板
+        # 控制面板 - 固定高度
         control_group = self._create_control_panel()
-        layout.addWidget(control_group)
+        control_group.setMaximumHeight(80)  # 限制控制面板高度
+        layout.addWidget(control_group, 0)  # stretch=0，不拉伸
         
-        # Qt Charts图表
+        # Qt Charts图表 - 主要显示区域
         chart_group = self._create_qt_chart_panel()
-        layout.addWidget(chart_group, stretch=2)
+        layout.addWidget(chart_group, 3)  # stretch=3，主要拉伸区域
         
-        # 经验增长统计表
+        # 经验增长统计表 - 次要显示区域
         stats_group = self._create_stats_panel()
-        layout.addWidget(stats_group, stretch=1)
+        layout.addWidget(stats_group, 2)  # stretch=2，次要拉伸区域
     
     def _create_control_panel(self) -> QGroupBox:
         """创建控制面板"""
@@ -171,11 +172,20 @@ class QtVisualizationWidget(QWidget):
         # 创建图表视图
         self.chart_view = QChartView(self.chart)
         self.chart_view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        
+        # 关键：设置图表视图的大小策略，确保能够正确拉伸
+        self.chart_view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
+        # 设置图表视图的最小高度，确保有足够显示空间
+        self.chart_view.setMinimumHeight(300)  # 增加最小高度
+        
         layout.addWidget(self.chart_view)
         
-        # 状态标签
+        # 状态标签 - 固定高度
         self.chart_status_label = QLabel("正在加载图表数据...")
         self.chart_status_label.setStyleSheet("color: gray; font-style: italic;")
+        self.chart_status_label.setMaximumHeight(25)  # 限制状态标签高度
+        self.chart_status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self.chart_status_label)
         
         return group
@@ -192,16 +202,31 @@ class QtVisualizationWidget(QWidget):
             "起始时间", "结束时间", "间隔时间", "经验增长", "等级", "预估十分钟", "结束经验值"
         ])
         
+        # 关键：设置表格的大小策略，让它能够正确拉伸
+        self.stats_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        
         # 设置表格样式
         header = self.stats_table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.stats_table.setAlternatingRowColors(True)
         
+        # 设置表格的最小高度，确保能显示足够的数据行
+        self.stats_table.setMinimumHeight(200)  # 增加最小高度
+        
+        # 设置垂直滚动条策略，确保内容可滚动
+        self.stats_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.stats_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        
+        # 设置行高调整模式
+        self.stats_table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        
         layout.addWidget(self.stats_table)
         
-        # 统计状态标签
+        # 统计状态标签 - 固定高度
         self.stats_status_label = QLabel("正在加载统计数据...")
         self.stats_status_label.setStyleSheet("color: gray; font-style: italic;")
+        self.stats_status_label.setMaximumHeight(25)  # 限制状态标签高度，避免占用太多空间
+        self.stats_status_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         layout.addWidget(self.stats_status_label)
         
         return group
