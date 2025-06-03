@@ -105,7 +105,7 @@ def easyocr_test():
     """EasyOCR 测试函数"""
     
     # 图片文件路径
-    image_path = "../ocr_data/screenshots/screenshot_20250527_004658.png"
+    image_path = "../ocr_data/CleanShot 2025-06-01 at 02.19.47@2x.png"
     
     print("=== EasyOCR 识别测试 ===")
     print(f"图片路径: {image_path}")
@@ -134,18 +134,6 @@ def easyocr_test():
                 'name': '英文',
                 'description': '仅英文识别',
                 'filename': 'easyocr_result_en.png'
-            },
-            {
-                'languages': ['ch_sim', 'en'], 
-                'name': '简体中文+英文',
-                'description': '简体中文和英文混合识别',
-                'filename': 'easyocr_result_ch_sim_en.png'
-            },
-            {
-                'languages': ['ch_tra', 'en'], 
-                'name': '繁体中文+英文',
-                'description': '繁体中文和英文混合识别',
-                'filename': 'easyocr_result_ch_tra_en.png'
             }
         ]
         
