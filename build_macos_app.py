@@ -109,7 +109,7 @@ exe = EXE(
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
-    entitlements_file=None,
+    entitlements_file='entitlements.plist',
     icon='assets/icon.icns' if Path('assets/icon.icns').exists() else None,
 )
 
@@ -142,9 +142,18 @@ app = BUNDLE(
         'NSHighResolutionCapable': True,
         'LSApplicationCategoryType': 'public.app-category.utilities',
         'NSRequiresAquaSystemAppearance': False,
-        # 请求必要的权限
-        'NSAccessibilityUsageDescription': 'ArtaleKey需要辅助功能权限来模拟按键',
+        # 必要的权限声明
+        'NSAccessibilityUsageDescription': 'ArtaleKey需要辅助功能权限来模拟按键和监听全局快捷键',
         'NSAppleEventsUsageDescription': 'ArtaleKey需要AppleScript权限来检测窗口状态',
+        # 新增：输入监听权限（macOS 10.15+）
+        'NSInputMonitoringUsageDescription': 'ArtaleKey需要输入监听权限来检测全局快捷键组合',
+        # 文件访问权限（如果需要）
+        'NSDesktopFolderUsageDescription': 'ArtaleKey需要访问桌面以进行截图和OCR功能',
+        'NSDocumentsFolderUsageDescription': 'ArtaleKey需要访问文档文件夹以保存配置和日志',
+        # 摄像头访问权限（如果使用截图功能）
+        'NSCameraUsageDescription': 'ArtaleKey需要屏幕录制权限来进行截图和OCR功能',
+        # 屏幕录制权限（macOS 10.15+）
+        'NSScreenCaptureUsageDescription': 'ArtaleKey需要屏幕录制权限来进行截图和OCR功能',
     }},
 )
 '''
@@ -233,6 +242,86 @@ def build_app():
         print(f"错误输出: {e.stderr}")
         return False
 
+def check_developer_id():
+    """检查是否有开发者证书"""
+    try:
+        result = subprocess.run([
+            'security', 'find-identity', '-v', '-p', 'codesigning'
+        ], capture_output=True, text=True)
+        
+        if 'Developer ID Application' in result.stdout:
+            # 提取证书名称
+            lines = result.stdout.strip().split('\n')
+            for line in lines:
+                if 'Developer ID Application' in line:
+                    cert_name = line.split('"')[1]
+                    return cert_name
+        return None
+    except:
+        return None
+
+def sign_app(app_path: Path, cert_name: str = None):
+    """代码签名应用程序"""
+    print("🔏 开始代码签名...")
+    
+    if not cert_name:
+        cert_name = check_developer_id()
+        if not cert_name:
+            print("⚠️  未找到开发者证书，使用临时签名")
+            cert_name = "-"  # 使用临时签名
+    
+    try:
+        # 签名命令
+        cmd = [
+            'codesign',
+            '-s', cert_name,
+            '--deep',
+            '--force',
+            '--options', 'runtime',
+            '--entitlements', 'entitlements.plist',
+            str(app_path)
+        ]
+        
+        print(f"🔐 执行签名: codesign -s '{cert_name}' --deep --force --options runtime --entitlements entitlements.plist '{app_path}'")
+        
+        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
+        print("✅ 代码签名成功！")
+        return True
+        
+    except subprocess.CalledProcessError as e:
+        print(f"❌ 代码签名失败: {e.stderr}")
+        return False
+
+def verify_app(app_path: Path):
+    """验证应用程序"""
+    print("🔍 验证应用程序...")
+    
+    try:
+        # 验证签名
+        result = subprocess.run([
+            'codesign', '-dv', str(app_path)
+        ], capture_output=True, text=True)
+        
+        if result.returncode == 0:
+            print("✅ 代码签名验证通过")
+        
+        # 验证 Gatekeeper
+        result = subprocess.run([
+            'spctl', '--assess', '--type', 'execute', '-vvv', str(app_path)
+        ], capture_output=True, text=True)
+        
+        if 'accepted' in result.stdout:
+            print("✅ Gatekeeper 验证通过")
+        else:
+            print("⚠️  Gatekeeper 验证失败，但应用仍可运行")
+            print(f"详细信息: {result.stdout}")
+        
+        return True
+        
+    except Exception as e:
+        print(f"⚠️  验证过程中出现错误: {e}")
+        return False
+
 def post_build_setup():
     """构建后设置"""
     print("⚙️ 进行构建后设置...")
@@ -244,11 +333,74 @@ def post_build_setup():
     
     print(f"✅ 应用程序已创建: {app_path.absolute()}")
     
+    # 确保二进制文件有执行权限
+    binary_path = app_path / 'Contents/MacOS/ArtaleKey'
+    if binary_path.exists():
+        os.chmod(binary_path, 0o755)
+        print("✅ 已设置二进制文件执行权限")
+    
+    # 尝试代码签名
+    if Path('entitlements.plist').exists():
+        if sign_app(app_path):
+            verify_app(app_path)
+    else:
+        print("⚠️  未找到 entitlements.plist，跳过代码签名")
+    
+    # 创建使用指南
+    usage_guide = '''
+# ArtaleKey macOS 应用使用指南
+
+## 权限设置
+应用首次运行时，需要授予以下权限：
+
+1. **辅助功能权限**
+   - 系统偏好设置 → 安全性与隐私 → 隐私 → 辅助功能
+   - 添加 ArtaleKey.app 到允许列表
+
+2. **输入监控权限**（macOS 10.15+）
+   - 系统偏好设置 → 安全性与隐私 → 隐私 → 输入监控
+   - 添加 ArtaleKey.app 到允许列表
+
+3. **屏幕录制权限**（如果使用OCR功能）
+   - 系统偏好设置 → 安全性与隐私 → 隐私 → 屏幕录制
+   - 添加 ArtaleKey.app 到允许列表
+
+## 启动方式
+1. 双击 ArtaleKey.app 启动
+2. 如果提示"无法打开"，右键点击 → 打开
+
+## 故障排除
+如果快捷键不工作：
+1. 确认已授予所有必要权限
+2. 重启应用程序
+3. 重启系统（权限更改后可能需要）
+
+## 代码签名状态
+- 如果应用已签名，将更稳定可靠
+- 未签名的应用仍可使用，但需要手动授权
+
+## 命令行验证
+验证应用权限：
+```bash
+spctl --assess --type execute -vvv "dist/ArtaleKey.app"
+```
+
+查看签名信息：
+```bash
+codesign -dv "dist/ArtaleKey.app"
+```
+'''
+    
+    with open('MACOS_USAGE_GUIDE.md', 'w', encoding='utf-8') as f:
+        f.write(usage_guide)
+    
+    print("✅ 使用指南已创建: MACOS_USAGE_GUIDE.md")
+    
     # 创建DMG指南
     dmg_guide = '''
 # 创建DMG安装包
 
-如果您想创建DMG安装包，可以：
+## 方法一：使用 create-dmg（推荐）
 
 1. 安装create-dmg工具：
 ```bash
@@ -269,12 +421,19 @@ create-dmg \\
   "dist/"
 ```
 
-或者手动创建：
+## 方法二：手动创建
+
 1. 打开"磁盘工具"
-2. 文件 -> 新建映像 -> 空白映像
+2. 文件 → 新建映像 → 空白映像
 3. 将ArtaleKey.app拖入
 4. 创建应用程序链接
 5. 保存为DMG文件
+
+## 分发注意事项
+
+- 如果应用已签名和公证，用户可以直接运行
+- 未签名的应用需要用户手动允许运行
+- 建议在DMG中包含使用说明
 '''
     
     with open('DMG_GUIDE.md', 'w', encoding='utf-8') as f:
@@ -299,6 +458,11 @@ def main():
     
     print("\n📦 开始打包流程...")
     
+    # 检查entitlements.plist文件
+    if not Path('entitlements.plist').exists():
+        print("⚠️  未找到 entitlements.plist，将影响权限申请")
+        print("💡 建议创建此文件以解决快捷键监听问题")
+    
     # 创建配置文件
     if not create_spec_file():
         return 1
@@ -316,14 +480,16 @@ def main():
     
     print("\n🎉 打包完成！")
     print("📱 应用程序位置: dist/ArtaleKey.app")
-    print("💡 使用说明:")
-    print("   1. 双击运行应用程序")
-    print("   2. 首次运行需要授予辅助功能权限")
-    print("   3. 系统偏好设置 -> 安全性与隐私 -> 辅助功能")
-    print("   4. 添加ArtaleKey到允许列表")
+    print("\n💡 重要提示:")
+    print("   📋 快捷键问题解决方案:")
+    print("   1. 确保应用已进行代码签名")
+    print("   2. 在系统偏好设置中授予必要权限")
+    print("   3. 重启应用以使权限生效")
+    print("   4. 查看 MACOS_USAGE_GUIDE.md 获取详细说明")
     print("\n📋 其他文件:")
     print("   • ArtaleKey.spec - 打包配置")
-    print("   • assets/icon_guide.md - 图标制作指南")  
+    print("   • entitlements.plist - 权限配置")
+    print("   • MACOS_USAGE_GUIDE.md - 使用指南")
     print("   • DMG_GUIDE.md - DMG制作指南")
     
     return 0
