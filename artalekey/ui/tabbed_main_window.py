@@ -143,6 +143,7 @@ class TabbedMainWindow(QMainWindow):
         # 连接各个标签页的特定信号
         self._connect_quick_up_signals()
         self._connect_ocr_signals()
+        self._connect_logs_signals()
         self._connect_settings_signals()
         
         # 连接核心组件信号
@@ -160,6 +161,14 @@ class TabbedMainWindow(QMainWindow):
         ocr_tab = self.tab_manager.get_tab('ocr')
         if ocr_tab:
             ocr_tab.ocr_config_changed.connect(self._on_ocr_config_changed)
+    
+    def _connect_logs_signals(self):
+        """连接日志标签页信号"""
+        logs_tab = self.tab_manager.get_tab('logs')
+        if logs_tab:
+            # 日志标签页目前没有特殊信号需要连接
+            # 如果将来需要，可以在这里添加
+            pass
     
     def _connect_settings_signals(self):
         """连接设置标签页信号"""

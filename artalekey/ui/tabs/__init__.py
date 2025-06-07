@@ -5,6 +5,7 @@ from artalekey.ui.tabs.base_tab import BaseTab, TabSignalManager
 from artalekey.ui.tabs.quick_up_tab import QuickUpTab
 from artalekey.ui.tabs.ocr_tab import OCRTab
 from artalekey.ui.tabs.settings_tab import SettingsTab
+from artalekey.ui.tabs.logs_tab import LogsTab
 
 
 class TabFactory:
@@ -13,6 +14,7 @@ class TabFactory:
     TAB_CONFIGS = [
         {"name": "quick_up", "title": "快速向上", "class": QuickUpTab},
         {"name": "ocr", "title": "OCR识别", "class": OCRTab},
+        {"name": "logs", "title": "日志", "class": LogsTab},
         {"name": "settings", "title": "设置", "class": SettingsTab},
     ]
     
@@ -107,6 +109,7 @@ __all__ = [
     'TabSignalManager', 
     'QuickUpTab',
     'OCRTab',
+    'LogsTab',
     'SettingsTab',
     'TabFactory',
     'TabManager'

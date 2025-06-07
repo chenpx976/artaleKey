@@ -1,8 +1,8 @@
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QLineEdit, QMessageBox
+    QLineEdit, QMessageBox, QFrame
 )
-from PyQt6.QtCore import pyqtSignal
+from PyQt6.QtCore import pyqtSignal, QTimer
 from typing import Dict, Any
 import os
 import json
@@ -14,6 +14,10 @@ from artalekey.ui.tabs.base_tab import BaseTab
 from artalekey.ui.simple_target_selector import SimpleTargetSelector
 from artalekey.core.config import config_manager
 from artalekey.core.logger import performance_logger
+from artalekey.core.permissions import (
+    permission_manager, PermissionType, PermissionStatus,
+    get_permission_status_text, get_permission_name, get_permission_description
+)
 
 
 class SettingsTab(BaseTab):
@@ -33,10 +37,21 @@ class SettingsTab(BaseTab):
         self._cleanup_old_data_btn = None
         self._export_data_btn = None
         self._open_data_dir_btn = None
+        
+        # 权限相关UI组件
+        self._permission_labels = {}
+        self._permission_buttons = {}
+        self._refresh_permissions_btn = None
+        self._permission_timer = None
+        
         super().__init__("settings", parent)
         
     def init_ui(self):
         """初始化UI"""
+        # macOS 权限管理组（仅在macOS上显示）
+        if permission_manager.is_supported():
+            self._create_permissions_group()
+        
         # LLM API 配置组
         self._create_llm_config_group()
         
@@ -48,6 +63,208 @@ class SettingsTab(BaseTab):
         
         # 添加弹性空间
         self.main_layout.addStretch()
+        
+        # 启动权限检查定时器（仅在macOS上）
+        if permission_manager.is_supported():
+            self._start_permission_timer()
+    
+    def _create_permissions_group(self):
+        """创建权限管理组（仅macOS）"""
+        permissions_group = QGroupBox("macOS 系统权限")
+        permissions_layout = QVBoxLayout(permissions_group)
+        
+        # 权限说明
+        info_label = QLabel(
+            "⚠️ ArtaleKey 需要以下系统权限才能正常工作。"
+            "请点击对应按钮授予权限，然后重启应用。"
+        )
+        info_label.setStyleSheet("color: #666; font-weight: bold; padding: 5px;")
+        info_label.setWordWrap(True)
+        permissions_layout.addWidget(info_label)
+        
+        # 分隔线
+        line = QFrame()
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setFrameShadow(QFrame.Shadow.Sunken)
+        permissions_layout.addWidget(line)
+        
+        # 为每个权限创建UI
+        for perm_type in PermissionType:
+            self._create_permission_row(permissions_layout, perm_type)
+        
+        # 权限操作按钮
+        button_layout = QHBoxLayout()
+        
+        self._refresh_permissions_btn = QPushButton("🔄 刷新权限状态")
+        self._refresh_permissions_btn.clicked.connect(self._refresh_permissions)
+        button_layout.addWidget(self._refresh_permissions_btn)
+        
+        open_settings_btn = QPushButton("⚙️ 打开隐私设置")
+        open_settings_btn.clicked.connect(self._open_privacy_settings)
+        button_layout.addWidget(open_settings_btn)
+        
+        button_layout.addStretch()
+        permissions_layout.addLayout(button_layout)
+        
+        self.main_layout.addWidget(permissions_group)
+        
+        # 初始权限检查
+        self._refresh_permissions()
+    
+    def _create_permission_row(self, layout: QVBoxLayout, perm_type: PermissionType):
+        """为单个权限创建UI行"""
+        row_layout = QHBoxLayout()
+        
+        # 权限名称和描述
+        name_label = QLabel(f"🔧 {get_permission_name(perm_type)}")
+        name_label.setStyleSheet("font-weight: bold; min-width: 80px;")
+        row_layout.addWidget(name_label)
+        
+        desc_label = QLabel(get_permission_description(perm_type))
+        desc_label.setStyleSheet("color: #666; font-size: 11px;")
+        row_layout.addWidget(desc_label)
+        
+        row_layout.addStretch()
+        
+        # 权限状态标签
+        status_label = QLabel("检查中...")
+        status_label.setStyleSheet("min-width: 80px; font-weight: bold;")
+        self._permission_labels[perm_type] = status_label
+        row_layout.addWidget(status_label)
+        
+        # 权限请求按钮
+        request_btn = QPushButton("请求权限")
+        request_btn.setMaximumWidth(80)
+        request_btn.clicked.connect(lambda: self._request_permission(perm_type))
+        self._permission_buttons[perm_type] = request_btn
+        row_layout.addWidget(request_btn)
+        
+        layout.addLayout(row_layout)
+    
+    def _refresh_permissions(self):
+        """刷新权限状态"""
+        if not permission_manager.is_supported():
+            return
+            
+        try:
+            performance_logger.info("开始刷新权限状态")
+            permissions = permission_manager.check_all_permissions()
+            
+            for perm_type, status in permissions.items():
+                if perm_type in self._permission_labels:
+                    status_text = get_permission_status_text(status)
+                    self._permission_labels[perm_type].setText(status_text)
+                    
+                    # 根据状态设置颜色
+                    if status == PermissionStatus.GRANTED:
+                        self._permission_labels[perm_type].setStyleSheet(
+                            "color: green; font-weight: bold; min-width: 80px;"
+                        )
+                        # 隐藏请求按钮
+                        if perm_type in self._permission_buttons:
+                            self._permission_buttons[perm_type].setVisible(False)
+                    elif status == PermissionStatus.DENIED:
+                        self._permission_labels[perm_type].setStyleSheet(
+                            "color: red; font-weight: bold; min-width: 80px;"
+                        )
+                        # 显示请求按钮
+                        if perm_type in self._permission_buttons:
+                            self._permission_buttons[perm_type].setVisible(True)
+                    else:
+                        self._permission_labels[perm_type].setStyleSheet(
+                            "color: orange; font-weight: bold; min-width: 80px;"
+                        )
+                        # 显示请求按钮
+                        if perm_type in self._permission_buttons:
+                            self._permission_buttons[perm_type].setVisible(True)
+            
+            performance_logger.info("权限状态刷新完成")
+            
+        except Exception as e:
+            performance_logger.error(f"刷新权限状态失败: {e}")
+            QMessageBox.warning(self, "错误", f"刷新权限状态失败: {e}")
+    
+    def _request_permission(self, perm_type: PermissionType):
+        """请求特定权限"""
+        try:
+            performance_logger.info(f"请求权限: {get_permission_name(perm_type)}")
+            
+            success = False
+            
+            if perm_type == PermissionType.ACCESSIBILITY:
+                success = permission_manager.request_accessibility_permission()
+                if success:
+                    QMessageBox.information(
+                        self, "权限请求", 
+                        "辅助功能权限请求已发送。\n"
+                        "请在弹出的系统对话框中点击'打开系统偏好设置'，\n"
+                        "然后在辅助功能列表中勾选 ArtaleKey。"
+                    )
+                else:
+                    QMessageBox.information(
+                        self, "权限设置", 
+                        "请手动打开：\n"
+                        "系统偏好设置 → 安全性与隐私 → 隐私 → 辅助功能\n"
+                        "然后添加 ArtaleKey 到允许列表。"
+                    )
+                    
+            elif perm_type == PermissionType.INPUT_MONITORING:
+                success = permission_manager.open_input_monitoring_settings()
+                QMessageBox.information(
+                    self, "权限设置", 
+                    "请在打开的系统偏好设置中：\n"
+                    "在'输入监控'列表中勾选 ArtaleKey。\n"
+                    "设置完成后请重启应用。"
+                )
+                
+            elif perm_type == PermissionType.SCREEN_CAPTURE:
+                success = permission_manager.request_screen_capture_permission()
+                if success:
+                    QMessageBox.information(
+                        self, "权限请求", 
+                        "屏幕录制权限请求已发送。\n"
+                        "请在弹出的系统对话框中点击'允许'。"
+                    )
+                else:
+                    QMessageBox.information(
+                        self, "权限设置", 
+                        "请手动打开：\n"
+                        "系统偏好设置 → 安全性与隐私 → 隐私 → 屏幕录制\n"
+                        "然后添加 ArtaleKey 到允许列表。"
+                    )
+            
+            # 延迟刷新权限状态
+            QTimer.singleShot(2000, self._refresh_permissions)
+            
+        except Exception as e:
+            performance_logger.error(f"请求权限失败: {e}")
+            QMessageBox.critical(self, "错误", f"请求权限失败: {e}")
+    
+    def _open_privacy_settings(self):
+        """打开隐私设置"""
+        try:
+            if permission_manager.open_privacy_settings():
+                QMessageBox.information(
+                    self, "设置指南", 
+                    "已打开隐私设置页面。\n\n"
+                    "请在以下位置添加 ArtaleKey：\n"
+                    "• 辅助功能 - 用于快捷键监听\n"
+                    "• 输入监控 - 用于全局快捷键\n"
+                    "• 屏幕录制 - 用于截图和OCR\n\n"
+                    "设置完成后请重启应用。"
+                )
+            else:
+                QMessageBox.warning(self, "错误", "无法打开隐私设置页面")
+        except Exception as e:
+            QMessageBox.critical(self, "错误", f"打开隐私设置失败: {e}")
+    
+    def _start_permission_timer(self):
+        """启动权限检查定时器"""
+        if self._permission_timer is None:
+            self._permission_timer = QTimer()
+            self._permission_timer.timeout.connect(self._refresh_permissions)
+            # 每30秒检查一次权限状态
+            self._permission_timer.start(30000)
     
     def _create_llm_config_group(self):
         """创建LLM API配置组"""
@@ -334,4 +551,18 @@ class SettingsTab(BaseTab):
     
     def is_window_filter_enabled(self) -> bool:
         """检查窗口过滤是否启用"""
-        return self._target_selector.is_filter_enabled() if self._target_selector else True 
+        return self._target_selector.is_filter_enabled() if self._target_selector else True
+    
+    def get_permissions_status(self) -> Dict[PermissionType, PermissionStatus]:
+        """获取权限状态"""
+        if permission_manager.is_supported():
+            return permission_manager.check_all_permissions()
+        return {}
+    
+    def closeEvent(self, event):
+        """窗口关闭事件"""
+        # 停止权限检查定时器
+        if self._permission_timer:
+            self._permission_timer.stop()
+            self._permission_timer = None
+        super().closeEvent(event) if hasattr(super(), 'closeEvent') else None 

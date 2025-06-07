@@ -18,6 +18,22 @@
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
     
+    <!-- 辅助功能权限 - 用于全局快捷键监听和按键模拟 -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+    
+    <!-- 输入监控权限 - macOS 10.15+ 必需，用于监听键盘输入 -->
+    <key>com.apple.security.device.input-monitoring</key>
+    <true/>
+    
+    <!-- 屏幕录制权限 - 用于截图和OCR功能 -->
+    <key>com.apple.security.device.screen-capture</key>
+    <true/>
+    
+    <!-- 网络访问权限 - 用于LLM API调用 -->
+    <key>com.apple.security.network.client</key>
+    <true/>
+    
     <!-- 允许调试（可选，用于开发调试） -->
     <!-- <key>com.apple.security.cs.debugger</key>
     <true/> -->
