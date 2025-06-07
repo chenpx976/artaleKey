@@ -171,20 +171,6 @@ class OCRTab(BaseTab):
                 
                 # 刷新可视化数据
                 self.refresh_visualization_data()
-                
-                # 智能过滤：OCR成功后自动设置过滤条件
-                if level != '未知':
-                    character_name = game_data.get('character_name', '')
-                    if isinstance(level, str) and level.isdigit():
-                        level = int(level)
-                    elif isinstance(level, int):
-                        pass  # 已经是int类型
-                    else:
-                        level = None
-                        
-                    if level and self._visualization_widget:
-                        self._auto_set_visualization_filters(character_name, level)
-                        performance_logger.info(f"OCR成功后自动设置可视化过滤: 角色={character_name}, 等级={level}")
             else:
                 self._ocr_status_label.setText("✅ OCR识别完成")
                 self._ocr_status_label.setStyleSheet(
@@ -288,6 +274,10 @@ class OCRTab(BaseTab):
                     else:
                         money_text = str(money)
                 
+                # 获取角色名称和地图信息
+                character_name = latest_data.get('character_name', '未知')
+                current_map = latest_data.get('current_map', '未知')
+                
                 # 时间转换
                 beijing_time = self._convert_utc_to_beijing(created_at)
                 
@@ -295,14 +285,11 @@ class OCRTab(BaseTab):
                 data_text = f"""🎮 等级: {level}
 ⚡ 经验: {exp_text}
 💰 金钱: {money_text}
+👤 角色: {character_name}
+🗺️ 地图: {current_map}
 🕒 更新: {beijing_time}"""
                 
                 self.game_data_label.setText(data_text)
-                
-                # 智能过滤：如果有有效数据，自动设置可视化过滤条件
-                if level != '未知' and self._visualization_widget:
-                    character_name = latest_data.get('character_name', '')
-                    self._auto_set_visualization_filters(character_name, level)
                 
             else:
                 self.game_data_label.setText("📭 暂无游戏数据\n\n请使用OCR功能获取游戏数据")
@@ -343,34 +330,4 @@ class OCRTab(BaseTab):
             performance_logger.warning(f"时间转换失败: {e}")
             return utc_time_str
     
-    def _auto_set_visualization_filters(self, character_name: str, level: int):
-        """根据最新数据自动设置可视化过滤条件"""
-        try:
-            if not self._visualization_widget:
-                return
-            
-            performance_logger.info(f"智能过滤: 设置角色={character_name}, 等级={level}")
-            
-            # 自动设置角色过滤
-            if character_name:
-                character_combo = self._visualization_widget.character_combo
-                for i in range(character_combo.count()):
-                    if character_combo.itemData(i) == character_name:
-                        character_combo.setCurrentIndex(i)
-                        performance_logger.info(f"智能过滤: 已设置角色过滤为 {character_name}")
-                        break
-            
-            # 自动设置等级过滤
-            if level and isinstance(level, int):
-                level_combo = self._visualization_widget.level_combo
-                for i in range(level_combo.count()):
-                    if level_combo.itemData(i) == level:
-                        level_combo.setCurrentIndex(i)
-                        performance_logger.info(f"智能过滤: 已设置等级过滤为 {level}")
-                        break
-            
-            # 触发数据刷新
-            self._visualization_widget.refresh_data()
-            
-        except Exception as e:
-            performance_logger.error(f"智能过滤设置失败: {e}") 
+ 

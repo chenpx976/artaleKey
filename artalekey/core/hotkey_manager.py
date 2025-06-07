@@ -249,26 +249,39 @@ class HotkeyListener(QThread):
     def run(self):
         """优化的监听循环"""
         try:
+            performance_logger.info(f"热键监听器启动 - 主触发键: {self._main_trigger_key}, OCR触发键: {self._ocr_trigger_key}")
             with keyboard.Listener(
                 on_press=self._on_press,
                 on_release=self._on_release,
                 suppress=False  # 不抑制按键，减少系统负担
             ) as listener:
+                performance_logger.info("键盘监听器已启动")
                 while self._running:
                     self.msleep(50)  # 使用Qt的msleep，更高效
                 listener.stop()
+                performance_logger.info("键盘监听器已停止")
         except Exception as e:
+            performance_logger.error(f"HotkeyListener error: {e}")
             print(f"HotkeyListener error: {e}")
             
     def _on_press(self, key):
         """优化的按键按下处理"""
         try:
             key_id = None
+            key_char = None
+            
             if isinstance(key, KeyCode) and hasattr(key, 'char') and key.char:
-                if key.char in {self._main_trigger_key, self._ocr_trigger_key}:  # 处理主触发键和OCR触发键
-                    key_id = key.char
+                key_char = key.char.lower() if key.char else None
+                if key_char in {self._main_trigger_key, self._ocr_trigger_key}:  # 处理主触发键和OCR触发键
+                    key_id = key_char
             elif key == Key.up:
                 key_id = key
+                
+            # 添加调试日志
+            if key_char:
+                performance_logger.debug(f"按键按下: {key_char}, 监听键: {self._main_trigger_key}, {self._ocr_trigger_key}")
+            elif key == Key.up:
+                performance_logger.debug(f"方向键按下: ↑")
                 
             if key_id is None:
                 return
@@ -277,6 +290,7 @@ class HotkeyListener(QThread):
                 current_state = self._key_states.get(key_id, KeyState.RELEASED)
                 if current_state == KeyState.RELEASED:
                     self._key_states[key_id] = KeyState.PRESSED
+                    performance_logger.info(f"按键状态更新: {key_id} -> PRESSED")
                     
                     # 处理OCR触发键的单独按下（只在目标窗口激活时）
                     if key_id == self._ocr_trigger_key:
@@ -284,24 +298,34 @@ class HotkeyListener(QThread):
                             self.screenshot_ocr_toggle.emit()
                             performance_logger.info(f"OCR trigger key '{self._ocr_trigger_key}' pressed in target window")
                         else:
-                            performance_logger.debug(f"OCR trigger key '{self._ocr_trigger_key}' pressed but target window not active")
+                            performance_logger.info(f"OCR trigger key '{self._ocr_trigger_key}' pressed but target window not active")
                     
                     # 检查是否需要开始长按计时（主触发键+up组合）
                     if self._is_combination_pressed():
+                        performance_logger.info(f"组合键检测: {self._main_trigger_key}+↑ 已按下，启动长按计时器")
                         self._start_long_press_timer()
                         
-        except (AttributeError, TypeError):
-            pass  # 忽略特殊按键
+        except (AttributeError, TypeError) as e:
+            performance_logger.debug(f"按键处理异常: {e}")  # 记录异常
             
     def _on_release(self, key):
         """优化的按键释放处理"""
         try:
             key_id = None
+            key_char = None
+            
             if isinstance(key, KeyCode) and hasattr(key, 'char') and key.char:
-                if key.char in {self._main_trigger_key, self._ocr_trigger_key}:
-                    key_id = key.char
+                key_char = key.char.lower() if key.char else None
+                if key_char in {self._main_trigger_key, self._ocr_trigger_key}:
+                    key_id = key_char
             elif key == Key.up:
                 key_id = key
+                
+            # 添加调试日志
+            if key_char:
+                performance_logger.debug(f"按键释放: {key_char}")
+            elif key == Key.up:
+                performance_logger.debug(f"方向键释放: ↑")
                 
             if key_id is None:
                 return
@@ -309,17 +333,19 @@ class HotkeyListener(QThread):
             with self._lock:
                 if key_id in self._key_states:
                     self._key_states[key_id] = KeyState.RELEASED
+                    performance_logger.info(f"按键状态更新: {key_id} -> RELEASED")
                     
                     # 只有主触发键+up组合才需要停止长按计时器和发送释放信号
                     if key_id in {self._main_trigger_key, Key.up}:
                         # 停止长按计时器
                         self._cancel_long_press_timer()
+                        performance_logger.info(f"组合键释放: 停止长按计时器")
                         
                         # 发送释放信号
                         self.key_combination_released.emit()
                     
-        except (AttributeError, TypeError):
-            pass
+        except (AttributeError, TypeError) as e:
+            performance_logger.debug(f"按键释放处理异常: {e}")
             
     def stop(self):
         """安全停止监听器"""
