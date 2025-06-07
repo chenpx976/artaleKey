@@ -6,7 +6,7 @@ MacOS 游戏快捷键辅助工具，专为 MapleStory Worlds 等游戏优化。
 
 ### 推荐启动方式
 ```bash
-python -m artalekey
+uv run python -m artalekey
 ```
 
 ## ⚙️ 快速设置
