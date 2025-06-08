@@ -1,9 +1,10 @@
-from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget, QLabel, QPushButton
+from PyQt6.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QTabWidget
 from PyQt6.QtCore import Qt, QSize, QTimer
 from PyQt6.QtGui import QResizeEvent
 
 from artalekey.ui.tabs import TabManager
 from artalekey.ui.simple_styles import get_adaptive_style
+from artalekey.ui.multi_status_bar import MultiLineStatusWidget
 from artalekey.core.config import config_manager
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
 from artalekey.core.logger import performance_logger
@@ -28,9 +29,8 @@ class TabbedMainWindow(QMainWindow):
         self.key_simulator = None
         self.screenshot_ocr_manager = None
         
-        # 窗口状态相关组件
-        self.window_status_label = None
-        self.activate_button = None
+        # 多行状态栏组件
+        self.multi_status_widget = None
         
         # 运行状态
         self._is_simulation_running = False
@@ -55,7 +55,7 @@ class TabbedMainWindow(QMainWindow):
         
         # 主布局
         main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setContentsMargins(10, 10, 10, 0)  # 底部边距设为0，让状态栏紧贴底部
         main_layout.setSpacing(10)
         
         # 创建标签页容器和管理器
@@ -64,50 +64,33 @@ class TabbedMainWindow(QMainWindow):
         self.tab_manager.initialize_tabs(self)
         main_layout.addWidget(tab_widget)
         
-        # 状态栏（包含窗口状态和激活按钮）
-        self._init_status_bar()
+        # 多行状态栏（替代原来的状态栏）
+        self._init_multi_status_bar()
+        main_layout.addWidget(self.multi_status_widget)
         
         # 应用自适应样式
         self.update_adaptive_style()
     
-    def _init_status_bar(self):
-        """初始化状态栏"""
-        status_bar = self.statusBar()
-        
-        # 窗口状态标签
-        self.window_status_label = QLabel("窗口状态: 检测中...")
-        self.window_status_label.setStyleSheet("color: gray; margin-right: 10px;")
-        status_bar.addWidget(self.window_status_label)
-        
-        # 中间的弹性空间
-        status_bar.addWidget(QLabel(), 1)  # 添加可拉伸的widget
-        
-        # 激活窗口按钮
-        self.activate_button = QPushButton("激活窗口")
-        self.activate_button.clicked.connect(self._on_activate_window_clicked)
-        self.activate_button.setMaximumWidth(80)
-        self.activate_button.setMaximumHeight(25)
-        self.activate_button.setStyleSheet("""
-            QPushButton {
-                font-size: 11px;
-                padding: 4px 8px;
-                border-radius: 3px;
-                background-color: #007ACC;
-                color: white;
-                border: none;
-            }
-            QPushButton:hover {
-                background-color: #005999;
-            }
-            QPushButton:disabled {
-                background-color: #CCCCCC;
-                color: #666666;
-            }
-        """)
-        status_bar.addPermanentWidget(self.activate_button)
+    def _init_multi_status_bar(self):
+        """初始化多行状态栏"""
+        self.multi_status_widget = MultiLineStatusWidget()
+        self.multi_status_widget.activate_window_requested.connect(self._on_activate_window_clicked)
         
         # 初始化窗口监控
         self._init_window_monitoring()
+        
+        # 初始化时加载最新的游戏数据
+        self._load_latest_game_data()
+    
+    def _load_latest_game_data(self):
+        """加载最新的游戏数据到状态栏"""
+        try:
+            from artalekey.core.database import game_db
+            latest_data = game_db.get_latest_data()
+            if latest_data:
+                self.multi_status_widget.update_game_data(latest_data)
+        except Exception as e:
+            performance_logger.warning(f"加载最新游戏数据失败: {e}")
     
     def _init_core_components(self):
         """初始化核心组件"""
@@ -214,6 +197,8 @@ class TabbedMainWindow(QMainWindow):
         ocr_config = all_configs.get('ocr', {})
         if ocr_config:
             self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 'c'))
+            # 初始化OCR状态显示
+            self._update_ocr_status_display(ocr_config)
         
         # 应用窗口过滤配置
         settings_config = all_configs.get('settings', {})
@@ -276,7 +261,8 @@ class TabbedMainWindow(QMainWindow):
     
     def _on_tab_status_changed(self, tab_name: str, status_message: str):
         """标签页状态变更处理"""
-        self.statusBar().showMessage(f"[{tab_name}] {status_message}")
+        # 不再使用传统状态栏显示消息，可以考虑其他方式或忽略
+        pass
     
     def _on_global_switch_changed(self, enabled: bool):
         """全局开关变更处理"""
@@ -299,7 +285,24 @@ class TabbedMainWindow(QMainWindow):
         self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 'c'))
         target_window = config.get('target_window', 'MapleStory Worlds')
         self.hotkey_listener.set_target_window_name(target_window)
+        # 更新OCR状态显示
+        self._update_ocr_status_display(config)
         self.save_configs()
+    
+    def _update_ocr_status_display(self, config: dict):
+        """更新OCR状态显示"""
+        enabled = config.get('enabled', True)
+        trigger_key = config.get('trigger_key', 'c')
+        
+        if enabled:
+            status_text = f"✅ 已启用 (按 {trigger_key.upper()} 键触发)"
+            status_type = "success"
+        else:
+            status_text = "❌ 未启用"
+            status_type = "error"
+        
+        if self.multi_status_widget:
+            self.multi_status_widget.update_ocr_status(status_text, status_type)
     
     def _on_api_key_updated(self, api_key: str):
         """API密钥更新处理"""
@@ -341,27 +344,26 @@ class TabbedMainWindow(QMainWindow):
     
     def _on_target_window_activated(self):
         """目标窗口激活处理"""
-        self.statusBar().showMessage("目标窗口已激活")
+        pass  # 窗口状态已通过_update_window_status处理
     
     def _on_target_window_deactivated(self):
         """目标窗口失活处理"""
-        self.statusBar().showMessage("目标窗口已失活")
+        pass  # 窗口状态已通过_update_window_status处理
     
     def _on_screenshot_ocr_toggle(self):
         """截屏OCR触发处理"""
         ocr_tab = self.tab_manager.get_tab('ocr')
         if not ocr_tab or not ocr_tab.is_enabled():
-            if ocr_tab:
-                ocr_tab.update_ocr_status("disabled")
+            if self.multi_status_widget:
+                self.multi_status_widget.update_ocr_status("❌ 功能未启用，无法触发", "error")
             return
         
         self.screenshot_ocr_manager.trigger_ocr()
     
     def _on_ocr_triggered(self):
         """OCR触发确认处理"""
-        ocr_tab = self.tab_manager.get_tab('ocr')
-        if ocr_tab:
-            ocr_tab.update_ocr_status("processing")
+        if self.multi_status_widget:
+            self.multi_status_widget.update_ocr_status("🔄 正在执行识别...", "processing")
     
     def _on_game_data_extracted(self, game_data: dict):
         """游戏数据提取完成处理"""
@@ -374,30 +376,39 @@ class TabbedMainWindow(QMainWindow):
         if ocr_tab:
             ocr_tab.update_ocr_status("success", game_data=game_data)
         
-        # 更新状态栏
+        # 更新多行状态栏中的OCR状态和游戏数据
         level = game_data.get('level', '未知')
         experience = game_data.get('experience', '未知')
-        money = game_data.get('money', '未知')
         
         # 格式化显示
         exp_text = self._format_experience(experience)
-        money_text = self._format_money(money)
         
-        status_msg = f"OCR识别完成 - 等级: {level}, 经验: {exp_text}, 金钱: {money_text}"
-        self.statusBar().showMessage(status_msg)
+        # 更新OCR状态
+        status_text = f"✅ 识别成功 - 等级: {level}, 经验: {exp_text}"
+        if self.multi_status_widget:
+            self.multi_status_widget.update_ocr_status(status_text, "success")
+            # 更新游戏数据显示
+            self.multi_status_widget.update_game_data(game_data)
     
     def _on_ocr_error(self, error_message: str):
         """OCR错误处理"""
         ocr_tab = self.tab_manager.get_tab('ocr')
         if ocr_tab:
             ocr_tab.update_ocr_status("error", error_message)
-        self.statusBar().showMessage(f"OCR处理失败: {error_message}")
+        
+        # 更新多行状态栏中的OCR状态
+        if self.multi_status_widget:
+            self.multi_status_widget.update_ocr_status(f"❌ 处理失败: {error_message}", "error")
     
     def _on_activate_window_clicked(self):
         """激活窗口按钮点击"""
         from artalekey.core.window_status import window_status_monitor
         window_status_monitor.activate_target_window()
-        self.statusBar().showMessage("正在尝试激活MapleStory Worlds窗口...", 3000) 
+        
+        # 临时显示激活中状态
+        if self.multi_status_widget:
+            self.multi_status_widget.update_window_status(False, True)  # 显示为未激活但存在
+            # 可以考虑添加一个临时的"正在激活..."状态
     
     # 辅助方法
     def _format_experience(self, experience) -> str:
@@ -486,20 +497,11 @@ class TabbedMainWindow(QMainWindow):
     
     def _update_window_status(self, is_active: bool):
         """更新窗口激活状态"""
-        if is_active:
-            self.window_status_label.setText("窗口状态: ✅ 已激活")
-            self.window_status_label.setStyleSheet("color: green; font-weight: bold; margin-right: 10px;")
-            self.activate_button.setEnabled(False)
-        else:
-            from artalekey.core.window_status import window_status_monitor
-            if window_status_monitor.is_window_found():
-                self.window_status_label.setText("窗口状态: ⚠️ 未激活") 
-                self.window_status_label.setStyleSheet("color: orange; font-weight: bold; margin-right: 10px;")
-                self.activate_button.setEnabled(True)
-            else:
-                self.window_status_label.setText("窗口状态: ❌ 未运行")
-                self.window_status_label.setStyleSheet("color: red; font-weight: bold; margin-right: 10px;")
-                self.activate_button.setEnabled(False)
+        from artalekey.core.window_status import window_status_monitor
+        is_found = window_status_monitor.is_window_found()
+        
+        if self.multi_status_widget:
+            self.multi_status_widget.update_window_status(is_active, is_found)
     
     def _update_window_found(self, is_found: bool):
         """更新窗口存在状态"""
