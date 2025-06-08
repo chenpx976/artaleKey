@@ -79,6 +79,8 @@ class GameDataDatabase:
                         max_mp INTEGER,
                         experience TEXT,
                         money TEXT,
+                        hp_potion_count INTEGER,
+                        mp_potion_count INTEGER,
                         raw_data TEXT,
                         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                     )
@@ -90,7 +92,9 @@ class GameDataDatabase:
                     ('character_class', 'TEXT'),
                     ('map_name', 'TEXT'),
                     ('max_hp', 'INTEGER'),
-                    ('max_mp', 'INTEGER')
+                    ('max_mp', 'INTEGER'),
+                    ('hp_potion_count', 'INTEGER'),
+                    ('mp_potion_count', 'INTEGER')
                 ]
                 
                 for column_name, column_type in new_columns:
@@ -159,6 +163,8 @@ class GameDataDatabase:
                 max_mp = game_data.get('max_mp')
                 experience = game_data.get('experience')
                 money = game_data.get('money')
+                hp_potion_count = game_data.get('hp_potion_count')
+                mp_potion_count = game_data.get('mp_potion_count')
                 
                 # 使用JSON序列化处理numpy类型
                 serializable_data = self._make_json_serializable(game_data)
@@ -172,13 +178,14 @@ class GameDataDatabase:
                 
                 cursor.execute('''
                     INSERT INTO game_data (timestamp, level, character_name, character_class, 
-                                         map_name, max_hp, max_mp, experience, money, raw_data)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                         map_name, max_hp, max_mp, experience, money, 
+                                         hp_potion_count, mp_potion_count, raw_data)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ''', (timestamp, level, character_name, character_class, map_name, 
-                      max_hp, max_mp, experience, money, raw_data))
+                      max_hp, max_mp, experience, money, hp_potion_count, mp_potion_count, raw_data))
                 
                 conn.commit()
-                performance_logger.info(f"游戏数据已保存到数据库: Level={level}, Character={character_name}, Class={character_class}, Map={map_name}, Exp={experience}, Money={money}")
+                performance_logger.info(f"游戏数据已保存到数据库: Level={level}, Character={character_name}, Class={character_class}, Map={map_name}, Exp={experience}, Money={money}, HP药水={hp_potion_count}, MP药水={mp_potion_count}")
                 return True
                 
         except Exception as e:
@@ -193,7 +200,8 @@ class GameDataDatabase:
                 
                 cursor.execute('''
                     SELECT timestamp, level, character_name, character_class, map_name,
-                           max_hp, max_mp, experience, money, raw_data, created_at
+                           max_hp, max_mp, experience, money, hp_potion_count, mp_potion_count, 
+                           raw_data, created_at
                     FROM game_data
                     ORDER BY created_at DESC
                     LIMIT 1
@@ -226,8 +234,10 @@ class GameDataDatabase:
                         'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[9]) if row[9] else {},
-                        'created_at': row[10]
+                        'hp_potion_count': row[9],
+                        'mp_potion_count': row[10],
+                        'raw_data': json.loads(row[11]) if row[11] else {},
+                        'created_at': row[12]
                     }
                     
         except Exception as e:
@@ -243,7 +253,8 @@ class GameDataDatabase:
                 
                 cursor.execute('''
                     SELECT timestamp, level, character_name, character_class, map_name,
-                           max_hp, max_mp, experience, money, raw_data, created_at
+                           max_hp, max_mp, experience, money, hp_potion_count, mp_potion_count,
+                           raw_data, created_at
                     FROM game_data
                     ORDER BY created_at DESC
                     LIMIT ?
@@ -277,8 +288,10 @@ class GameDataDatabase:
                         'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[9]) if row[9] else {},
-                        'created_at': row[10]
+                        'hp_potion_count': row[9],
+                        'mp_potion_count': row[10],
+                        'raw_data': json.loads(row[11]) if row[11] else {},
+                        'created_at': row[12]
                     })
                 return result
                 
@@ -294,7 +307,8 @@ class GameDataDatabase:
                 
                 cursor.execute('''
                     SELECT timestamp, level, character_name, character_class, map_name,
-                           max_hp, max_mp, experience, money, raw_data, created_at
+                           max_hp, max_mp, experience, money, hp_potion_count, mp_potion_count,
+                           raw_data, created_at
                     FROM game_data
                     WHERE created_at BETWEEN ? AND ?
                     ORDER BY created_at DESC
@@ -328,8 +342,10 @@ class GameDataDatabase:
                         'max_mp': row[6],
                         'experience': experience,
                         'money': money,
-                        'raw_data': json.loads(row[9]) if row[9] else {},
-                        'created_at': row[10]
+                        'hp_potion_count': row[9],
+                        'mp_potion_count': row[10],
+                        'raw_data': json.loads(row[11]) if row[11] else {},
+                        'created_at': row[12]
                     })
                 return result
                 

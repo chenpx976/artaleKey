@@ -276,7 +276,15 @@ class OCRTab(BaseTab):
                 
                 # 获取角色名称和地图信息
                 character_name = latest_data.get('character_name', '未知')
-                current_map = latest_data.get('current_map', '未知')
+                current_map = latest_data.get('map_name', '未知')
+                
+                # 获取药水数量
+                hp_potion_count = latest_data.get('hp_potion_count', '未知')
+                mp_potion_count = latest_data.get('mp_potion_count', '未知')
+                
+                # 格式化药水显示
+                hp_potion_text = str(hp_potion_count) if hp_potion_count is not None else "未知"
+                mp_potion_text = str(mp_potion_count) if mp_potion_count is not None else "未知"
                 
                 # 时间转换
                 beijing_time = self._convert_utc_to_beijing(created_at)
@@ -287,6 +295,8 @@ class OCRTab(BaseTab):
 💰 金钱: {money_text}
 👤 角色: {character_name}
 🗺️ 地图: {current_map}
+🧪 HP药水: {hp_potion_text}
+🔮 MP药水: {mp_potion_text}
 🕒 更新: {beijing_time}"""
                 
                 self.game_data_label.setText(data_text)

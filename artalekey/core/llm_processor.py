@@ -9,6 +9,7 @@ from PIL import Image
 from io import BytesIO
 from artalekey.core.logger import performance_logger
 from artalekey.core.config import config_manager
+from artalekey.core.llm_image_data import hp_mp_potion_image_base64
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
 import threading
@@ -35,21 +36,25 @@ class LLMProcessor:
 {
   "level": 角色等级 (数字),
   "character_name": "角色名称" (字符串),
-  "character_class": "角色职业" (字符串, 繁体中文),
-  "map_name": "当前地图名称" (字符串, 繁体中文),
+  "character_class": "角色职业" (字符串, 繁体中文, 格式: 弩弓手、法师等),
+  "map_name": "当前地图名称" (字符串, 繁体中文, 格式: 大地图-小地图),
   "max_hp": 当前等级最大HP (数字),
   "max_mp": 当前等级最大MP (数字),
   "experience_value": 当前经验值 (数字),
   "experience_percentage": 当前经验值百分比 (数字，不含%符号),
-  "money": 角色当前持有金钱 (数字), 这个数字是在 "金幣" 的左边展示的, 你找不到就返回 null
+  "money": 角色当前持有金钱 (数字), 这个数字是在 "金幣" 的左边展示的, 你找不到就返回 null,
+  "hp_potion_count": HP药水数量 (数字), 这个数字在游戏界面右下角快捷键区域中，位于标有 "Ins" 的按键上，通常显示为一个数字，你找不到就返回 null,
+  "mp_potion_count": MP药水数量 (数字), 这个数字在游戏界面右下角快捷键区域中，位于标有 "Hm" 的按键上，通常显示为一个数字，你找不到就返回 null
 }
 
 注意事项：
-- 仔细观察截图中的所有界面元素，包括状态栏、角色信息面板、地图名称等
+- 仔细观察截图中的所有界面元素，特别是右下角的快捷键面板
 - 如果某个信息不可见或无法确定，请设置为null
 - 数字字段请只输出纯数字，不包含逗号、单位等
 - 百分比字段请只输出数字部分，如65.5而不是65.5%
-- 请确保输出为有效的JSON格式"""
+- 请确保输出为有效的JSON格式
+
+"""
     
     @classmethod
     def _ensure_thread_pool(cls):
@@ -128,7 +133,7 @@ class LLMProcessor:
                 image = image.convert('RGB')
             
             # 压缩图片以减少 API 调用成本
-            max_size = (1024, 1024)
+            max_size = (1920, 1080)
             if image.size[0] > max_size[0] or image.size[1] > max_size[1]:
                 image.thumbnail(max_size, Image.Resampling.LANCZOS)
                 performance_logger.info(f"图片已压缩到: {image.size}")
@@ -189,7 +194,9 @@ class LLMProcessor:
                 'max_mp': int,
                 'experience_value': int,
                 'experience_percentage': float,
-                'money': int
+                'money': int,
+                'hp_potion_count': int,
+                'mp_potion_count': int
             }
             
             for field, expected_type in field_types.items():
@@ -250,6 +257,7 @@ class LLMProcessor:
             
             data = {
                 "model": "qwen/qwen2.5-vl-72b-instruct:free",
+                # "model": "google/gemini-2.0-flash-exp:free",
                 "messages": [
                     {
                         "role": "user",
@@ -263,7 +271,7 @@ class LLMProcessor:
                                 "image_url": {
                                     "url": f"data:image/png;base64,{image_base64}"
                                 }
-                            }
+                            },
                         ]
                     }
                 ],
@@ -377,6 +385,13 @@ class LLMProcessor:
         # 金钱
         if 'money' in parsed_data:
             game_data['money'] = parsed_data['money']
+        
+        # 药水数量
+        if 'hp_potion_count' in parsed_data:
+            game_data['hp_potion_count'] = parsed_data['hp_potion_count']
+        
+        if 'mp_potion_count' in parsed_data:
+            game_data['mp_potion_count'] = parsed_data['mp_potion_count']
         
         # 添加处理方式标识
         game_data['processing_method'] = 'llm'

@@ -206,10 +206,10 @@ class QtVisualizationWidget(QWidget):
         
         # 创建表格 - 增加更多有用的列
         self.stats_table = QTableWidget()
-        self.stats_table.setColumnCount(10)  # 从7列增加到10列
+        self.stats_table.setColumnCount(11)  # 从10列增加到11列
         self.stats_table.setHorizontalHeaderLabels([
             "起始时间", "结束时间", "间隔时间", "经验增长", "等级", 
-            "地图地点", "效率评级", "预估十分钟", "时段", "结束经验值"
+            "地图地点", "预估十分钟", "时段", "结束经验值", "十分钟HP药水用量", "十分钟MP药水用量"
         ])
         
         # 关键：设置表格的大小策略，让它能够正确拉伸
@@ -599,6 +599,8 @@ class QtVisualizationWidget(QWidget):
             
             # 填充数据
             for row, growth in enumerate(exp_growth_data):
+                is_completed = growth.get('is_completed', True)
+                
                 # 起始时间
                 start_time = self._format_time_hms(growth['start_time'])
                 start_item = QTableWidgetItem(start_time)
@@ -606,25 +608,38 @@ class QtVisualizationWidget(QWidget):
                 self.stats_table.setItem(row, 0, start_item)
                 
                 # 结束时间
-                end_time = self._format_time_hms(growth['end_time'])
-                end_item = QTableWidgetItem(end_time)
-                end_item.setToolTip(f"结束时间: {end_time}")
+                if is_completed and growth['end_time']:
+                    end_time = self._format_time_hms(growth['end_time'])
+                    end_item = QTableWidgetItem(end_time)
+                    end_item.setToolTip(f"结束时间: {end_time}")
+                else:
+                    end_item = QTableWidgetItem("进行中...")
+                    end_item.setToolTip("当前正在进行的记录")
+                    end_item.setBackground(QColor(173, 216, 230))  # 浅蓝色
                 self.stats_table.setItem(row, 1, end_item)
                 
                 # 间隔时间
-                interval = self._format_interval(growth['interval_seconds'])
-                interval_item = QTableWidgetItem(interval)
-                interval_item.setToolTip(f"间隔: {interval} ({growth['interval_seconds']}秒)")
+                if is_completed and growth['interval_seconds']:
+                    interval = self._format_interval(growth['interval_seconds'])
+                    interval_item = QTableWidgetItem(interval)
+                    interval_item.setToolTip(f"间隔: {interval} ({growth['interval_seconds']}秒)")
+                else:
+                    interval_item = QTableWidgetItem("-")
+                    interval_item.setToolTip("进行中，暂无间隔时间")
                 self.stats_table.setItem(row, 2, interval_item)
                 
                 # 经验增长
-                exp_gain = f"{growth['exp_gain']:,}"
-                exp_gain_item = QTableWidgetItem(exp_gain)
-                # 根据经验增长量设置颜色
-                if growth['exp_gain'] >= 5000:
-                    exp_gain_item.setBackground(QColor(144, 238, 144))  # 浅绿色
-                elif growth['exp_gain'] >= 2000:
-                    exp_gain_item.setBackground(QColor(255, 255, 224))  # 浅黄色
+                if is_completed and growth['exp_gain']:
+                    exp_gain = f"{growth['exp_gain']:,}"
+                    exp_gain_item = QTableWidgetItem(exp_gain)
+                    # 根据经验增长量设置颜色
+                    if growth['exp_gain'] >= 5000:
+                        exp_gain_item.setBackground(QColor(144, 238, 144))  # 浅绿色
+                    elif growth['exp_gain'] >= 2000:
+                        exp_gain_item.setBackground(QColor(255, 255, 224))  # 浅黄色
+                else:
+                    exp_gain_item = QTableWidgetItem("-")
+                    exp_gain_item.setToolTip("进行中，暂无经验增长数据")
                 self.stats_table.setItem(row, 3, exp_gain_item)
                 
                 # 等级
@@ -637,82 +652,153 @@ class QtVisualizationWidget(QWidget):
                 map_item.setToolTip(f"地图: {map_name}")
                 self.stats_table.setItem(row, 5, map_item)
                 
-                # 效率评级
-                efficiency_rating = self._calculate_efficiency_rating(growth['exp_gain'], growth['interval_seconds'])
-                efficiency_item = QTableWidgetItem(efficiency_rating)
-                # 根据效率设置颜色
-                if efficiency_rating in ['S', 'A']:
-                    efficiency_item.setBackground(QColor(144, 238, 144))  # 浅绿色
-                elif efficiency_rating in ['B']:
-                    efficiency_item.setBackground(QColor(255, 255, 224))  # 浅黄色
-                elif efficiency_rating in ['D', 'F']:
-                    efficiency_item.setBackground(QColor(255, 182, 193))  # 浅红色
-                efficiency_item.setToolTip(f"效率评级: {efficiency_rating}")
-                self.stats_table.setItem(row, 6, efficiency_item)
-                
                 # 预估十分钟
-                avg_exp_per_minute = growth['exp_gain'] / (growth['interval_seconds'] / 60)
-                estimated_ten_minutes_exp = avg_exp_per_minute * 10
-                estimated_exp_value = f"{estimated_ten_minutes_exp:,.0f}"
-                self.stats_table.setItem(row, 7, QTableWidgetItem(estimated_exp_value))
+                if is_completed and growth['exp_gain'] and growth['interval_seconds']:
+                    avg_exp_per_minute = growth['exp_gain'] / (growth['interval_seconds'] / 60)
+                    estimated_ten_minutes_exp = avg_exp_per_minute * 10
+                    estimated_exp_value = f"{estimated_ten_minutes_exp:,.0f}"
+                    estimated_item = QTableWidgetItem(estimated_exp_value)
+                else:
+                    estimated_item = QTableWidgetItem("-")
+                    estimated_item.setToolTip("进行中，暂无预估数据")
+                self.stats_table.setItem(row, 6, estimated_item)
                 
                 # 时段标识
-                time_period = self._get_time_period(growth['end_time'])
-                time_period_item = QTableWidgetItem(time_period)
-                time_period_item.setToolTip(f"时间段: {time_period}")
-                self.stats_table.setItem(row, 8, time_period_item)
+                if is_completed and growth['end_time']:
+                    time_period = self._get_time_period(growth['end_time'])
+                    time_period_item = QTableWidgetItem(time_period)
+                    time_period_item.setToolTip(f"时间段: {time_period}")
+                else:
+                    start_time_period = self._get_time_period(growth['start_time'])
+                    time_period_item = QTableWidgetItem(f"{start_time_period} (进行中)")
+                    time_period_item.setToolTip("当前时段")
+                self.stats_table.setItem(row, 7, time_period_item)
                 
                 # 结束经验值
-                end_exp_value = f"{growth['end_exp_value']:,}"
-                self.stats_table.setItem(row, 9, QTableWidgetItem(end_exp_value))
+                if is_completed and growth['end_exp_value']:
+                    end_exp_value = f"{growth['end_exp_value']:,}"
+                    end_exp_item = QTableWidgetItem(end_exp_value)
+                else:
+                    end_exp_item = QTableWidgetItem("-")
+                    end_exp_item.setToolTip("进行中，暂无结束经验值")
+                self.stats_table.setItem(row, 8, end_exp_item)
+                
+                # 十分钟HP药水用量
+                if is_completed:
+                    hp_potion_usage = self._calculate_potion_usage(growth, 'hp_potion_count')
+                    hp_potion_item = QTableWidgetItem(hp_potion_usage)
+                    hp_potion_item.setToolTip(f"十分钟HP药水用量: {hp_potion_usage}")
+                else:
+                    hp_potion_item = QTableWidgetItem("-")
+                    hp_potion_item.setToolTip("进行中，暂无药水用量数据")
+                self.stats_table.setItem(row, 9, hp_potion_item)
+                
+                # 十分钟MP药水用量
+                if is_completed:
+                    mp_potion_usage = self._calculate_potion_usage(growth, 'mp_potion_count')
+                    mp_potion_item = QTableWidgetItem(mp_potion_usage)
+                    mp_potion_item.setToolTip(f"十分钟MP药水用量: {mp_potion_usage}")
+                else:
+                    mp_potion_item = QTableWidgetItem("-")
+                    mp_potion_item.setToolTip("进行中，暂无药水用量数据")
+                self.stats_table.setItem(row, 10, mp_potion_item)
             
             # 自动调整列宽
             self.stats_table.resizeColumnsToContents()
             
-            # 更新状态
-            total_exp_gain = sum(growth['exp_gain'] for growth in exp_growth_data)
-            avg_interval = sum(growth['interval_seconds'] for growth in exp_growth_data) / len(exp_growth_data)
+            # 更新状态 - 只统计已完成的记录
+            completed_records = [growth for growth in exp_growth_data if growth.get('is_completed', True)]
+            in_progress_count = len(exp_growth_data) - len(completed_records)
+            
+            if completed_records:
+                total_exp_gain = sum(growth['exp_gain'] for growth in completed_records)
+                avg_interval = sum(growth['interval_seconds'] for growth in completed_records) / len(completed_records)
+                
+                # 计算药水用量统计
+                total_hp_potion_usage = sum(self._parse_potion_usage(self._calculate_potion_usage(growth, 'hp_potion_count')) for growth in completed_records)
+                total_mp_potion_usage = sum(self._parse_potion_usage(self._calculate_potion_usage(growth, 'mp_potion_count')) for growth in completed_records)
+            else:
+                total_exp_gain = 0
+                avg_interval = 0
+                total_hp_potion_usage = 0
+                total_mp_potion_usage = 0
+            
             character_text = character_filter if character_filter else "全角色"
             level_text = f"等级{level_filter}" if level_filter else "全等级"
             
-            # 计算效率统计
-            high_efficiency_count = sum(1 for growth in exp_growth_data 
-                                       if self._calculate_efficiency_rating(growth['exp_gain'], growth['interval_seconds']) in ['S', 'A'])
+            status_text = f"{character_text} {level_text}增长记录: {len(completed_records)}条已完成"
+            if in_progress_count > 0:
+                status_text += f", {in_progress_count}条进行中"
             
-            self.stats_status_label.setText(
-                f"{character_text} {level_text}增长记录: {len(exp_growth_data)}条, 总经验增长: {total_exp_gain:,}, "
-                f"平均间隔: {self._format_interval(avg_interval)}, 高效率记录: {high_efficiency_count}条"
-            )
+            if completed_records:
+                status_text += f", 总经验增长: {total_exp_gain:,}, 平均间隔: {self._format_interval(avg_interval)}, 总HP药水用量: {total_hp_potion_usage:.0f}, 总MP药水用量: {total_mp_potion_usage:.0f}"
+            
+            self.stats_status_label.setText(status_text)
             
         except Exception as e:
             performance_logger.error(f"刷新统计表格失败: {e}")
             self.stats_status_label.setText(f"统计数据加载失败: {e}")
     
-    def _calculate_efficiency_rating(self, exp_gain: int, interval_seconds: int) -> str:
-        """计算效率评级"""
+    def _calculate_potion_usage(self, growth_data: dict, potion_type: str) -> str:
+        """计算十分钟药水用量"""
         try:
+            start_count = growth_data.get(f'start_{potion_type}')
+            end_count = growth_data.get(f'end_{potion_type}')
+            interval_seconds = growth_data.get('interval_seconds', 0)
+            
+            performance_logger.debug(f"计算{potion_type}用量: start={start_count}, end={end_count}, interval={interval_seconds}秒")
+            
             if interval_seconds <= 0:
-                return "F"
+                performance_logger.debug(f"{potion_type}用量计算失败: 时间间隔无效")
+                return "N/A"
             
-            # 计算每分钟经验获取量
-            exp_per_minute = exp_gain / (interval_seconds / 60)
+            # 如果药水数量数据不可用，返回N/A
+            if start_count is None or end_count is None:
+                performance_logger.debug(f"{potion_type}用量计算失败: 药水数量数据缺失")
+                return "N/A"
             
-            # 评级标准（根据实际游戏经验调整）
-            if exp_per_minute >= 2000:
-                return "S"  # 超级高效
-            elif exp_per_minute >= 1500:
-                return "A"  # 高效
-            elif exp_per_minute >= 1000:
-                return "B"  # 良好
-            elif exp_per_minute >= 500:
-                return "C"  # 一般
-            elif exp_per_minute >= 200:
-                return "D"  # 较低
-            else:
-                return "F"  # 低效
+            # 确保药水数量是数字类型
+            try:
+                start_count = int(start_count)
+                end_count = int(end_count)
+            except (ValueError, TypeError):
+                performance_logger.debug(f"{potion_type}用量计算失败: 药水数量不是数字类型")
+                return "N/A"
+            
+            # 计算药水消耗量（开始数量 - 结束数量）
+            potion_used = start_count - end_count
+            
+            # 如果消耗量为负数（可能是补充了药水），设为0
+            if potion_used < 0:
+                performance_logger.debug(f"{potion_type}用量为负数({potion_used})，可能补充了药水，设为0")
+                potion_used = 0
+            
+            # 计算十分钟用量
+            minutes = interval_seconds / 60
+            if minutes <= 0:
+                return "N/A"
+            
+            ten_minute_usage = (potion_used / minutes) * 10
+            
+            # 向上取整
+            import math
+            ten_minute_usage_ceil = math.ceil(ten_minute_usage)
+            
+            performance_logger.debug(f"{potion_type}十分钟用量: {ten_minute_usage:.1f} -> {ten_minute_usage_ceil} (消耗{potion_used}个，用时{minutes:.1f}分钟)")
+            return str(ten_minute_usage_ceil)
         
-        except Exception:
+        except Exception as e:
+            performance_logger.debug(f"计算药水用量失败: {e}")
             return "N/A"
+    
+    def _parse_potion_usage(self, usage_str: str) -> float:
+        """解析药水用量字符串为数字"""
+        try:
+            if usage_str == "N/A":
+                return 0.0
+            return float(usage_str)
+        except:
+            return 0.0
 
     def _get_time_period(self, time_str: str) -> str:
         """获取时间段标识"""
@@ -796,7 +882,16 @@ class QtVisualizationWidget(QWidget):
                 growth_records = self._calculate_growth_for_level(valid_records, level_filter)
             
             # 按结束时间排序，最新的在前面
-            growth_records.sort(key=lambda x: x['end_time'], reverse=True)
+            # 处理 end_time 为 None 的情况（进行中的记录）
+            def sort_key(x):
+                end_time = x['end_time']
+                if end_time is None:
+                    # 进行中的记录使用 start_time，并且排在最前面
+                    return ('9999-12-31 23:59:59', True)  # 使用一个很大的时间值确保排在前面
+                else:
+                    return (end_time, False)
+            
+            growth_records.sort(key=sort_key, reverse=True)
             
             return growth_records[:50]  # 只返回最近50条记录
             
@@ -830,10 +925,16 @@ class QtVisualizationWidget(QWidget):
                     end_time = self._convert_to_beijing_time(curr_record['created_at'])
                     interval_seconds = int((end_time - start_time).total_seconds())
                     
-                    # 只记录合理的时间间隔（1秒到24小时之间）
-                    if 1 <= interval_seconds <= 86400:
+                    # 只记录合理的时间间隔（1秒到15分钟之间）
+                    if 1 <= interval_seconds <= 900:  # 15分钟 = 900秒
                         # 获取地图信息（优先使用结束时的地图）
                         map_name = curr_record.get('map_name') or prev_record.get('map_name') or '未知地图'
+                        
+                        # 获取药水数量
+                        start_hp = prev_record.get('hp_potion_count')
+                        end_hp = curr_record.get('hp_potion_count')
+                        start_mp = prev_record.get('mp_potion_count')
+                        end_mp = curr_record.get('mp_potion_count')
                         
                         growth_record = {
                             'start_time': prev_record['created_at'],
@@ -843,14 +944,65 @@ class QtVisualizationWidget(QWidget):
                             'level': level,
                             'end_exp_value': curr_value,
                             'map_name': map_name,  # 新增地图信息
+                            'start_hp_potion_count': start_hp,
+                            'end_hp_potion_count': end_hp,
+                            'start_mp_potion_count': start_mp,
+                            'end_mp_potion_count': end_mp,
+                            'is_completed': True,  # 标记为已完成的记录
                         }
                         growth_records.append(growth_record)
                         
-                        performance_logger.debug(f"记录经验增长: 等级{level}, 地图{map_name}, 从{prev_value:,}增长到{curr_value:,}, 增长{exp_gain:,}, 间隔{interval_seconds}秒")
+                        performance_logger.debug(f"记录经验增长: 等级{level}, 地图{map_name}, 从{prev_value:,}增长到{curr_value:,}, 增长{exp_gain:,}, 间隔{interval_seconds}秒, HP药水:{start_hp}->{end_hp}, MP药水:{start_mp}->{end_mp}")
                 
             except Exception as e:
                 performance_logger.warning(f"处理经验增长记录失败: {e}")
                 continue
+        
+        # 添加最新的"进行中"记录（只有在30分钟以内的才显示）
+        if records:
+            latest_record = records[-1]
+            latest_exp = latest_record.get('experience', {})
+            latest_value = latest_exp.get('value', 0)
+            
+            if latest_value > 0:  # 确保有有效的经验数据
+                # 检查起始时间是否在30分钟以内
+                try:
+                    start_time = self._convert_to_beijing_time(latest_record['created_at'])
+                    current_time = datetime.now(self.beijing_tz)
+                    
+                    # 确保时间都有时区信息
+                    if start_time.tzinfo is None:
+                        start_time = self.beijing_tz.localize(start_time)
+                    
+                    time_diff_seconds = (current_time - start_time).total_seconds()
+                    
+                    # 只有在30分钟（1800秒）以内的记录才显示为进行中
+                    if time_diff_seconds <= 1800:  # 30分钟 = 1800秒
+                        map_name = latest_record.get('map_name', '未知地图')
+                        
+                        current_record = {
+                            'start_time': latest_record['created_at'],
+                            'end_time': None,  # 没有结束时间
+                            'interval_seconds': None,  # 没有间隔时间
+                            'exp_gain': None,  # 没有经验增长
+                            'level': level,
+                            'end_exp_value': None,  # 没有结束经验值
+                            'map_name': map_name,
+                            'start_hp_potion_count': latest_record.get('hp_potion_count'),
+                            'end_hp_potion_count': None,
+                            'start_mp_potion_count': latest_record.get('mp_potion_count'),
+                            'end_mp_potion_count': None,
+                            'is_completed': False,  # 标记为进行中的记录
+                        }
+                        growth_records.append(current_record)
+                        
+                        performance_logger.debug(f"添加进行中记录: 等级{level}, 地图{map_name}, 当前经验{latest_value:,}, 距离现在{time_diff_seconds:.0f}秒")
+                    else:
+                        performance_logger.debug(f"跳过过期的进行中记录: 等级{level}, 距离现在{time_diff_seconds:.0f}秒 (超过30分钟)")
+                        
+                except Exception as e:
+                    performance_logger.warning(f"检查进行中记录时间失败: {e}")
+                    # 如果时间检查失败，不添加进行中记录
         
         return growth_records
     
