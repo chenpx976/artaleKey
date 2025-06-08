@@ -86,6 +86,25 @@ class GameDataDatabase:
                     )
                 ''')
                 
+                # 创建角色信息表 - 存储每个角色的最新信息
+                cursor.execute('''
+                    CREATE TABLE IF NOT EXISTS character_info (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        character_name TEXT UNIQUE NOT NULL,
+                        character_class TEXT,
+                        level INTEGER,
+                        max_hp INTEGER,
+                        max_mp INTEGER,
+                        money TEXT,
+                        map_name TEXT,
+                        experience TEXT,
+                        hp_potion_count INTEGER,
+                        mp_potion_count INTEGER,
+                        last_updated DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                    )
+                ''')
+                
                 # 添加新字段（如果不存在）
                 new_columns = [
                     ('character_name', 'TEXT'),
@@ -122,6 +141,14 @@ class GameDataDatabase:
                 ''')
                 cursor.execute('''
                     CREATE INDEX IF NOT EXISTS idx_map_name ON game_data(map_name)
+                ''')
+                
+                # 为角色信息表创建索引
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_character_info_name ON character_info(character_name)
+                ''')
+                cursor.execute('''
+                    CREATE INDEX IF NOT EXISTS idx_character_info_updated ON character_info(last_updated)
                 ''')
                 
                 conn.commit()
@@ -186,6 +213,10 @@ class GameDataDatabase:
                 
                 conn.commit()
                 performance_logger.info(f"游戏数据已保存到数据库: Level={level}, Character={character_name}, Class={character_class}, Map={map_name}, Exp={experience}, Money={money}, HP药水={hp_potion_count}, MP药水={mp_potion_count}")
+                
+                # 同时更新角色信息表
+                self.update_character_info(game_data)
+                
                 return True
                 
         except Exception as e:
@@ -670,6 +701,216 @@ class GameDataDatabase:
         except Exception as e:
             performance_logger.error(f"获取唯一地图失败: {e}")
             return []
+
+    def update_character_info(self, game_data: Dict[str, Any]) -> bool:
+        """更新角色信息表"""
+        try:
+            character_name = game_data.get('character_name')
+            if not character_name:
+                performance_logger.debug("没有角色名称，跳过角色信息更新")
+                return False
+            
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 准备数据
+                character_class = game_data.get('character_class')
+                level = game_data.get('level')
+                max_hp = game_data.get('max_hp')
+                max_mp = game_data.get('max_mp')
+                money = game_data.get('money')
+                map_name = game_data.get('map_name')
+                experience = game_data.get('experience')
+                hp_potion_count = game_data.get('hp_potion_count')
+                mp_potion_count = game_data.get('mp_potion_count')
+                
+                # 将复杂数据类型转换为字符串
+                if isinstance(experience, dict):
+                    experience = json.dumps(experience, ensure_ascii=False)
+                if isinstance(money, (dict, list)):
+                    money = json.dumps(money, ensure_ascii=False)
+                
+                # 检查是否已存在该角色的记录
+                cursor.execute('SELECT money FROM character_info WHERE character_name = ?', (character_name,))
+                existing_row = cursor.fetchone()
+                
+                # 如果新的金钱数据为空，但已有记录中有金钱数据，则保留原有金钱数据
+                if existing_row and (not money or money == ''):
+                    existing_money = existing_row[0]
+                    if existing_money and existing_money != '':
+                        money = existing_money
+                        performance_logger.debug(f"保留角色 {character_name} 的原有金钱数据: {money}")
+                
+                # 使用 INSERT OR REPLACE 来更新或插入角色信息
+                cursor.execute('''
+                    INSERT OR REPLACE INTO character_info 
+                    (character_name, character_class, level, max_hp, max_mp, money, 
+                     map_name, experience, hp_potion_count, mp_potion_count, last_updated)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                ''', (character_name, character_class, level, max_hp, max_mp, money,
+                      map_name, experience, hp_potion_count, mp_potion_count))
+                
+                conn.commit()
+                performance_logger.info(f"角色信息已更新: {character_name} - 等级:{level}, 金钱:{money}")
+                return True
+                
+        except Exception as e:
+            performance_logger.error(f"更新角色信息失败: {e}")
+            return False
+    
+    def get_character_info(self, character_name: str) -> Optional[Dict[str, Any]]:
+        """获取指定角色的最新信息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT character_name, character_class, level, max_hp, max_mp, money,
+                           map_name, experience, hp_potion_count, mp_potion_count, 
+                           last_updated, created_at
+                    FROM character_info
+                    WHERE character_name = ?
+                ''', (character_name,))
+                
+                row = cursor.fetchone()
+                if row:
+                    # 尝试反序列化复杂数据类型
+                    experience = row[7]
+                    if experience and isinstance(experience, str) and experience.startswith('{'):
+                        try:
+                            experience = json.loads(experience)
+                        except:
+                            pass
+                    
+                    money = row[5]
+                    if money and isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
+                        try:
+                            money = json.loads(money)
+                        except:
+                            pass
+                    
+                    return {
+                        'character_name': row[0],
+                        'character_class': row[1],
+                        'level': row[2],
+                        'max_hp': row[3],
+                        'max_mp': row[4],
+                        'money': money,
+                        'map_name': row[6],
+                        'experience': experience,
+                        'hp_potion_count': row[8],
+                        'mp_potion_count': row[9],
+                        'last_updated': row[10],
+                        'created_at': row[11]
+                    }
+                    
+        except Exception as e:
+            performance_logger.error(f"获取角色信息失败: {e}")
+            
+        return None
+    
+    def get_all_characters_info(self) -> List[Dict[str, Any]]:
+        """获取所有角色的最新信息"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute('''
+                    SELECT character_name, character_class, level, max_hp, max_mp, money,
+                           map_name, experience, hp_potion_count, mp_potion_count, 
+                           last_updated, created_at
+                    FROM character_info
+                    ORDER BY last_updated DESC
+                ''')
+                
+                rows = cursor.fetchall()
+                result = []
+                for row in rows:
+                    # 尝试反序列化复杂数据类型
+                    experience = row[7]
+                    if experience and isinstance(experience, str) and experience.startswith('{'):
+                        try:
+                            experience = json.loads(experience)
+                        except:
+                            pass
+                    
+                    money = row[5]
+                    if money and isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
+                        try:
+                            money = json.loads(money)
+                        except:
+                            pass
+                    
+                    result.append({
+                        'character_name': row[0],
+                        'character_class': row[1],
+                        'level': row[2],
+                        'max_hp': row[3],
+                        'max_mp': row[4],
+                        'money': money,
+                        'map_name': row[6],
+                        'experience': experience,
+                        'hp_potion_count': row[8],
+                        'mp_potion_count': row[9],
+                        'last_updated': row[10],
+                        'created_at': row[11]
+                    })
+                return result
+                
+        except Exception as e:
+            performance_logger.error(f"获取所有角色信息失败: {e}")
+            return []
+
+    def get_character_last_valid_money(self, character_name: str) -> Optional[Any]:
+        """获取角色的最新有效金钱数据，如果角色信息表中没有，则从历史记录中查找"""
+        try:
+            with sqlite3.connect(self.db_path) as conn:
+                cursor = conn.cursor()
+                
+                # 首先从角色信息表查找
+                cursor.execute('''
+                    SELECT money FROM character_info 
+                    WHERE character_name = ? AND money IS NOT NULL AND money != ''
+                ''', (character_name,))
+                
+                row = cursor.fetchone()
+                if row and row[0]:
+                    money = row[0]
+                    # 尝试反序列化
+                    if isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
+                        try:
+                            money = json.loads(money)
+                        except:
+                            pass
+                    performance_logger.debug(f"从角色信息表获取到 {character_name} 的金钱数据: {money}")
+                    return money
+                
+                # 如果角色信息表中没有，从游戏数据历史记录中查找该角色最近的有效金钱数据
+                cursor.execute('''
+                    SELECT money FROM game_data 
+                    WHERE character_name = ? AND money IS NOT NULL AND money != ''
+                    ORDER BY created_at DESC 
+                    LIMIT 1
+                ''', (character_name,))
+                
+                row = cursor.fetchone()
+                if row and row[0]:
+                    money = row[0]
+                    # 尝试反序列化
+                    if isinstance(money, str) and (money.startswith('{') or money.startswith('[')):
+                        try:
+                            money = json.loads(money)
+                        except:
+                            pass
+                    performance_logger.debug(f"从历史记录获取到 {character_name} 的金钱数据: {money}")
+                    return money
+                
+                performance_logger.debug(f"角色 {character_name} 没有找到任何有效的金钱数据")
+                return None
+                    
+        except Exception as e:
+            performance_logger.error(f"获取角色最新有效金钱数据失败: {e}")
+            return None
 
 # 全局数据库实例
 game_db = GameDataDatabase() 

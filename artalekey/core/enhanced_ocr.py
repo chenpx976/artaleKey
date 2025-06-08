@@ -277,6 +277,22 @@ class EnhancedOCRManager(QThread):
                 **llm_data
             }
             
+            # 4. 金钱数据回填逻辑
+            character_name = game_data.get('character_name')
+            current_money = game_data.get('money')
+            
+            # 如果当前金钱数据为空或无效，尝试从角色历史数据获取上次有效数据
+            if character_name and (not current_money or current_money == 0 or current_money == '0' or current_money == ''):
+                try:
+                    previous_money = game_db.get_character_last_valid_money(character_name)
+                    if previous_money is not None:
+                        game_data['money'] = previous_money
+                        performance_logger.info(f"角色 {character_name} 金钱数据回填: 使用历史数据 {previous_money}")
+                    else:
+                        performance_logger.debug(f"角色 {character_name} 没有找到任何有效的历史金钱数据")
+                except Exception as e:
+                    performance_logger.error(f"获取角色历史金钱数据失败: {e}")
+            
             # 检查是否有有效数据 - 更新检查条件以包含新字段
             has_valid_data = any([
                 game_data.get('level') is not None,
@@ -297,7 +313,7 @@ class EnhancedOCRManager(QThread):
             # 缓存结果
             self._last_result = game_data.copy()
             
-            # 4. 保存结果
+            # 5. 保存结果
             result_path = self._save_result(game_data, timestamp)
             
             # 保存到数据库（只有在有有效数据时）
@@ -307,7 +323,7 @@ class EnhancedOCRManager(QThread):
             except Exception as e:
                 performance_logger.error(f"保存数据到数据库失败: {e}")
             
-            # 5. 发送数据信号给UI更新
+            # 6. 发送数据信号给UI更新
             self.data_extracted.emit(game_data)
             
             total_time = time.time() - start_time
