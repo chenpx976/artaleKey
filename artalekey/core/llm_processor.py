@@ -126,8 +126,7 @@ class LLMProcessor:
         """设置API密钥"""
         try:
             # 从配置文件获取 API 密钥
-            llm_config = config_manager.get('llm', {})
-            api_key = llm_config.get('api_key', '')
+            api_key = config_manager.get('llm', 'api_key')
             
             performance_logger.info(f"LLM API密钥初始化 - 密钥状态: {'已设置' if api_key else '未设置'}")
             
@@ -155,9 +154,7 @@ class LLMProcessor:
             performance_logger.info(f"更新 API 密钥 - 新密钥长度: {len(api_key) if api_key else 0}")
             
             # 更新配置
-            llm_config = config_manager.get('llm', {})
-            llm_config['api_key'] = api_key
-            config_manager.set('llm', llm_config)
+            config_manager.set('llm', 'api_key', api_key)
             
             # 重新设置密钥
             self.api_key = api_key if api_key and len(api_key) >= 10 else None

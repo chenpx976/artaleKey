@@ -9,6 +9,7 @@ from artalekey.ui.components import OCRHotkeyCard
 from artalekey.ui.qt_chart_widget import QtVisualizationWidget
 from artalekey.core.database import game_db
 from artalekey.core.logger import performance_logger
+from artalekey.core.config import config_manager
 
 
 class OCRTab(BaseTab):
@@ -95,6 +96,27 @@ class OCRTab(BaseTab):
         
         # 添加弹性空间
         self.main_layout.addStretch()
+        
+        # 加载配置
+        self._load_config()
+    
+    def _load_config(self):
+        """加载配置"""
+        try:
+            # 加载OCR配置
+            ocr_config = {
+                'enabled': config_manager.get('screenshot_ocr', 'enabled'),
+                'trigger_key': config_manager.get('screenshot_ocr', 'trigger_key'),
+                'target_window': config_manager.get('screenshot_ocr', 'target_window'),
+                'save_screenshots': config_manager.get('screenshot_ocr', 'save_screenshots'),
+                'capture_window_only': config_manager.get('screenshot_ocr', 'capture_window_only')
+            }
+            
+            if self._ocr_card:
+                self._ocr_card.set_config(ocr_config)
+                
+        except Exception as e:
+            performance_logger.error(f"加载OCR配置失败: {e}")
     
     def get_config(self) -> Dict[str, Any]:
         """获取当前配置"""
@@ -113,6 +135,10 @@ class OCRTab(BaseTab):
     
     def _on_ocr_config_changed(self, config: dict):
         """OCR配置变更处理"""
+        # 保存配置
+        for key, value in config.items():
+            config_manager.set('screenshot_ocr', key, value)
+        
         # 发射信号
         self.ocr_config_changed.emit(config)
         self.emit_config_changed()

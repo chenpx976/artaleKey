@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QGroupBox, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, 
-    QLineEdit, QMessageBox, QFrame
+    QLineEdit, QMessageBox, QFrame, QCheckBox
 )
 from PyQt6.QtCore import pyqtSignal, QTimer
 from typing import Dict, Any
@@ -67,6 +67,9 @@ class SettingsTab(BaseTab):
         # 启动权限检查定时器（仅在macOS上）
         if permission_manager.is_supported():
             self._start_permission_timer()
+        
+        # 加载当前配置到UI组件
+        self._load_config_to_ui()
     
     def _create_permissions_group(self):
         """创建权限管理组（仅macOS）"""
@@ -329,6 +332,18 @@ class SettingsTab(BaseTab):
         data_group = QGroupBox("数据管理")
         data_layout = QVBoxLayout(data_group)
         
+        # 截图保存配置
+        screenshot_layout = QHBoxLayout()
+        screenshot_layout.addWidget(QLabel("保存截图:"))
+        
+        self._save_screenshots_checkbox = QCheckBox("启用截图保存")
+        self._save_screenshots_checkbox.setChecked(True)  # 默认启用
+        self._save_screenshots_checkbox.stateChanged.connect(self._on_save_screenshots_changed)
+        screenshot_layout.addWidget(self._save_screenshots_checkbox)
+        
+        screenshot_layout.addStretch()
+        data_layout.addLayout(screenshot_layout)
+        
         # 第一行按钮：数据操作
         data_operation_layout = QHBoxLayout()
         
@@ -357,34 +372,39 @@ class SettingsTab(BaseTab):
     
     def get_config(self) -> Dict[str, Any]:
         """获取当前配置"""
-        config = {
-            'llm': {
-                'api_key': self._api_key_input.text().strip() if self._api_key_input else ''
-            },
-            'window_filter': {
-                'enabled': self._target_selector.is_filter_enabled() if self._target_selector else True,
-                'target_app': self._target_selector.get_target_app() if self._target_selector else 'MapleStory Worlds'
-            }
+        return {
+            'api_key': self._api_key_input.text().strip() if self._api_key_input else '',
+            'target_app': self._target_selector.get_target_app() if self._target_selector else 'MapleStory Worlds',
+            'window_filter_enabled': self._target_selector.is_filter_enabled() if self._target_selector else True,
+            'save_screenshots': self._save_screenshots_checkbox.isChecked() if hasattr(self, '_save_screenshots_checkbox') else True
         }
-        return config
     
-    def set_config(self, config: Dict[str, Any]):
-        """设置配置"""
+    def _load_config_to_ui(self):
+        """加载配置到UI组件"""
         # 设置LLM配置
-        llm_config = config.get('llm', {})
-        if self._api_key_input and 'api_key' in llm_config:
-            self._api_key_input.setText(llm_config['api_key'])
+        api_key = config_manager.get('llm', 'api_key')
+        if self._api_key_input:
+            self._api_key_input.setText(api_key)
         
         # 更新API密钥状态
         self._update_api_key_status()
         
         # 设置窗口过滤配置
-        window_filter_config = config.get('window_filter', {})
         if self._target_selector:
-            self._target_selector.set_filter_enabled(window_filter_config.get('enabled', True))
-            target_app = window_filter_config.get('target_app', 'MapleStory Worlds')
-            if target_app:
-                self._target_selector.set_target_app(target_app)
+            window_filter_enabled = config_manager.get('window_filter', 'enabled')
+            target_app = config_manager.get('window_filter', 'target_app')
+            self._target_selector.set_filter_enabled(window_filter_enabled)
+            self._target_selector.set_target_app(target_app)
+        
+        # 设置截图保存配置
+        if hasattr(self, '_save_screenshots_checkbox'):
+            save_screenshots = config_manager.get('screenshot_ocr', 'save_screenshots')
+            self._save_screenshots_checkbox.setChecked(save_screenshots)
+    
+    def set_config(self, config: Dict[str, Any]):
+        """设置配置 - 兼容性方法"""
+        # 为了保持兼容性，直接调用加载方法
+        self._load_config_to_ui()
     
     def _toggle_api_key_visibility(self):
         """切换 API 密钥显示/隐藏"""
@@ -412,9 +432,7 @@ class SettingsTab(BaseTab):
             performance_logger.info(f"保存 API 密钥，长度: {len(api_key)}")
             
             # 保存到配置
-            llm_config = config_manager.get('llm', {})
-            llm_config['api_key'] = api_key
-            config_manager.set('llm', llm_config)
+            config_manager.set('llm', 'api_key', api_key)
             
             performance_logger.info("API 密钥已保存到配置文件")
             
@@ -437,8 +455,7 @@ class SettingsTab(BaseTab):
     def _update_api_key_status(self):
         """更新 API 密钥状态显示"""
         try:
-            llm_config = config_manager.get('llm', {})
-            api_key = llm_config.get('api_key', '')
+            api_key = config_manager.get('llm', 'api_key')
             
             performance_logger.info(f"更新 API 密钥状态 - 密钥长度: {len(api_key) if api_key else 0}")
             
@@ -531,12 +548,14 @@ class SettingsTab(BaseTab):
     
     def _on_window_filter_enabled(self, enabled: bool):
         """窗口过滤启用状态变更处理"""
+        config_manager.set('window_filter', 'enabled', enabled)
         self.window_filter_enabled.emit(enabled)
         self.emit_config_changed()
         self.emit_status_changed(f"窗口过滤功能{'已启用' if enabled else '已禁用'}")
     
     def _on_target_app_changed(self, target_app: str):
         """目标应用变更处理"""
+        config_manager.set('window_filter', 'target_app', target_app)
         self.target_app_changed.emit(target_app)
         self.emit_config_changed()
         self.emit_status_changed(f"目标应用已更改为: {target_app}")
@@ -558,6 +577,20 @@ class SettingsTab(BaseTab):
         if permission_manager.is_supported():
             return permission_manager.check_all_permissions()
         return {}
+    
+    def _on_save_screenshots_changed(self, state):
+        """截图保存配置变更处理"""
+        try:
+            # 直接设置配置
+            config_manager.set('screenshot_ocr', 'save_screenshots', bool(state))
+            
+            # 发送状态变更信号
+            self.emit_config_changed()
+            self.emit_status_changed(f"截图保存功能{'已启用' if state else '已禁用'}")
+            
+        except Exception as e:
+            performance_logger.error(f"更新截图保存配置失败: {e}")
+            QMessageBox.warning(self, "错误", f"更新截图保存配置失败: {e}")
     
     def closeEvent(self, event):
         """窗口关闭事件"""

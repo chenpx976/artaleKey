@@ -4,6 +4,7 @@ from typing import Dict, Any
 
 from artalekey.ui.tabs.base_tab import BaseTab
 from artalekey.ui.components import HotkeyCard
+from artalekey.core.config import config_manager
 
 
 class QuickUpTab(BaseTab):
@@ -51,6 +52,30 @@ class QuickUpTab(BaseTab):
         
         # 添加弹性空间
         self.main_layout.addStretch()
+        
+        # 加载配置
+        self._load_config()
+    
+    def _load_config(self):
+        """加载配置"""
+        try:
+            # 加载全局开关状态
+            global_enabled = config_manager.get('ui', 'global_enabled')
+            self._global_switch.setChecked(global_enabled)
+            
+            # 加载热键配置
+            hotkey_config = config_manager.get_hotkey_config("default")
+            if self._hotkey_card:
+                # 确保enabled状态与全局开关一致
+                hotkey_config['enabled'] = global_enabled
+                self._hotkey_card.set_config(hotkey_config)
+            
+            # 更新状态显示
+            self._update_status()
+            
+        except Exception as e:
+            from artalekey.core.logger import performance_logger
+            performance_logger.error(f"加载快速向上配置失败: {e}")
     
     def get_config(self) -> Dict[str, Any]:
         """获取当前配置"""
@@ -121,11 +146,16 @@ class QuickUpTab(BaseTab):
         """全局开关状态变更处理"""
         enabled = state == Qt.CheckState.Checked.value
         
+        # 保存全局开关状态
+        config_manager.set('ui', 'global_enabled', enabled)
+        
         # 同步更新HotkeyCard的enabled状态
         if self._hotkey_card:
             current_config = self._hotkey_card.get_config()
             current_config['enabled'] = enabled
             self._hotkey_card.set_config(current_config)
+            # 保存热键配置
+            config_manager.set_hotkey_config("default", current_config)
         
         self._update_status()
         
@@ -138,6 +168,9 @@ class QuickUpTab(BaseTab):
         """热键配置变更处理"""
         # 确保enabled状态与全局开关一致
         config['enabled'] = self._global_switch.isChecked() if self._global_switch else False
+        
+        # 保存热键配置
+        config_manager.set_hotkey_config(hotkey_id, config)
         
         # 更新状态显示（触发键可能变化了）
         self._update_status()

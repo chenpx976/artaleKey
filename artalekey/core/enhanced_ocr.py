@@ -63,7 +63,7 @@ class EnhancedOCRManager(QThread):
     
     def _is_target_window_active(self) -> bool:
         """检查目标窗口是否激活"""
-        target_window = self._config.get('target_window', 'MapleStory Worlds')
+        target_window = config_manager.get('screenshot_ocr', 'target_window')
         
         try:
             active_window = self.window_detector.get_active_window()
@@ -86,7 +86,7 @@ class EnhancedOCRManager(QThread):
             performance_logger.debug("使用窗口边界缓存")
             return self._last_window_bounds
         
-        target_window = self._config.get('target_window', 'MapleStory Worlds')
+        target_window = config_manager.get('screenshot_ocr', 'target_window')
         
         try:
             # 尝试直接获取游戏窗口区域
@@ -178,7 +178,8 @@ class EnhancedOCRManager(QThread):
     def trigger_ocr(self):
         """触发单次图片处理"""
         # 更新配置
-        self._config = config_manager.get('screenshot_ocr', {})
+        save_screenshots = config_manager.get('screenshot_ocr', 'save_screenshots')
+        performance_logger.info(f"当前截图保存配置: {save_screenshots}")
         
         # 1. 检查目标窗口是否激活
         if not self._is_target_window_active():
@@ -216,12 +217,18 @@ class EnhancedOCRManager(QThread):
             
             # 保存截图（仅在配置明确启用时）
             screenshot_path = None
-            if self._config.get('save_screenshots', False):
+            should_save = config_manager.get('screenshot_ocr', 'save_screenshots')
+            performance_logger.info(f"截图保存状态: {should_save}")
+            
+            if should_save:
                 screenshot_dir = os.path.join(self._output_folder, 'screenshots')
                 os.makedirs(screenshot_dir, exist_ok=True)
                 screenshot_path = os.path.join(screenshot_dir, f"screenshot_{timestamp}.png")
-                screenshot.save(screenshot_path)
-                performance_logger.info(f"截图已保存: {screenshot_path}")
+                try:
+                    screenshot.save(screenshot_path)
+                    performance_logger.info(f"截图已保存: {screenshot_path}")
+                except Exception as e:
+                    performance_logger.error(f"保存截图失败: {e}")
             else:
                 performance_logger.debug("截图保存已禁用，跳过文件保存")
             
@@ -340,7 +347,8 @@ class EnhancedOCRManager(QThread):
         """执行截图操作"""
         try:
             # 根据配置决定截图方式
-            if self._config.get('capture_window_only', True):
+            capture_window_only = config_manager.get('screenshot_ocr', 'capture_window_only')
+            if capture_window_only:
                 # 只截取目标窗口内容
                 window_bounds = self._get_target_window_bounds()
                 if window_bounds:

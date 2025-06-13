@@ -106,7 +106,7 @@ class PerformanceTest:
         
         # 测试一次完整保存
         start_time = time.perf_counter()
-        config_manager.save_config()
+        config_manager.settings.sync()
         end_time = time.perf_counter()
         
         duration = (end_time - start_time) * 1000

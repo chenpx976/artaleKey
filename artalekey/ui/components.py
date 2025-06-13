@@ -7,16 +7,22 @@ from PyQt6.QtCore import Qt, pyqtSignal, QTimer
 from PyQt6.QtGui import QFont, QPalette, QColor
 
 class HotkeyCard(QGroupBox):
-    """简化的热键配置卡片 - 原生外观"""
+    """简化的热键配置卡片 - 从配置管理器读取所有值"""
     config_changed = pyqtSignal(str, dict)  # 配置变更信号
 
     def __init__(self, hotkey_id: str, parent=None, enable_internal_switch: bool = True):
         super().__init__("热键设置", parent)
         self.hotkey_id = hotkey_id
-        self.enable_internal_switch = enable_internal_switch  # 控制是否显示内部开关
-        self._debounce_timer = QTimer()  # 防抖计时器
+        self.enable_internal_switch = enable_internal_switch
+        self._debounce_timer = QTimer()
         self._debounce_timer.setSingleShot(True)
         self._debounce_timer.timeout.connect(self._emit_config_changed)
+        
+        # 从配置管理器获取配置
+        from artalekey.core.config import config_manager
+        self.config_manager = config_manager
+        self.current_config = self.config_manager.get_hotkey_config(self.hotkey_id)
+        
         self.init_ui()
 
     def init_ui(self):
@@ -43,20 +49,21 @@ class HotkeyCard(QGroupBox):
         key_layout.addStretch()
         layout.addLayout(key_layout)
 
-        # 长按时间设置
+        # 长按时间设置 - 从配置读取
+        hold_time = self.current_config.get('hold_time')
         hold_layout = QVBoxLayout()
         hold_header = QHBoxLayout()
         hold_label = QLabel("长按触发时间:")
         hold_label.setMinimumWidth(120)
-        self.hold_value_label = QLabel("500ms")
-        self.hold_value_label.setStyleSheet("color: blue; font-weight: bold;")
+        self.hold_value_label = QLabel(f"{hold_time}ms")
+        self.hold_value_label.setStyleSheet("color: #fff; font-weight: bold;")
         hold_header.addWidget(hold_label)
         hold_header.addWidget(self.hold_value_label)
         hold_header.addStretch()
         
         self.hold_slider = QSlider(Qt.Orientation.Horizontal)
         self.hold_slider.setRange(100, 2000)
-        self.hold_slider.setValue(500)
+        self.hold_slider.setValue(hold_time)  # 从配置读取
         self.hold_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.hold_slider.setTickInterval(500)
         
@@ -64,20 +71,21 @@ class HotkeyCard(QGroupBox):
         hold_layout.addWidget(self.hold_slider)
         layout.addLayout(hold_layout)
         
-        # 间隔时间设置
+        # 间隔时间设置 - 从配置读取
+        interval = self.current_config.get('interval')
         interval_layout = QVBoxLayout()
         interval_header = QHBoxLayout()
         interval_label = QLabel("循环间隔时间:")
         interval_label.setMinimumWidth(120)
-        self.interval_value_label = QLabel("40ms")
-        self.interval_value_label.setStyleSheet("color: blue; font-weight: bold;")
+        self.interval_value_label = QLabel(f"{interval}ms")
+        self.interval_value_label.setStyleSheet("color: #fff; font-weight: bold;")
         interval_header.addWidget(interval_label)
         interval_header.addWidget(self.interval_value_label)
         interval_header.addStretch()
         
         self.interval_slider = QSlider(Qt.Orientation.Horizontal)
         self.interval_slider.setRange(10, 200)
-        self.interval_slider.setValue(40)
+        self.interval_slider.setValue(interval)  # 从配置读取
         self.interval_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.interval_slider.setTickInterval(50)
         
@@ -85,32 +93,32 @@ class HotkeyCard(QGroupBox):
         interval_layout.addWidget(self.interval_slider)
         layout.addLayout(interval_layout)
 
-        # 启用状态（只有在enable_internal_switch为True时才显示）
+        # 启用状态
         if self.enable_internal_switch:
             self.enabled_check = QCheckBox("启用此功能")
-            self.enabled_check.setChecked(False)  # 默认关闭
+            enabled = self.current_config.get('enabled')
+            self.enabled_check.setChecked(enabled)  # 从配置读取
             layout.addWidget(self.enabled_check)
-            # 连接信号
             self.enabled_check.stateChanged.connect(self._on_config_changed_debounced)
         else:
             self.enabled_check = None
 
-        # 连接信号 - 使用防抖机制
+        # 设置触发键 - 从配置读取
+        trigger_key = self.current_config.get('trigger_key')
+        self.key_combo.setCurrentText(trigger_key)
+
+        # 连接信号
         self.key_combo.currentTextChanged.connect(self._on_config_changed_debounced)
         self.hold_slider.valueChanged.connect(self._on_hold_time_changed)
         self.interval_slider.valueChanged.connect(self._on_interval_changed)
 
     def init_key_options(self):
-        """初始化按键选项 - 优化选项列表"""
-        # 常用字母键
+        """初始化按键选项"""
         common_keys = ['w', 'a', 's', 'd', 'q', 'e', 'r', 't', 'f', 'g']
         self.key_combo.addItems(common_keys)
         
-        # 其他字母键
         other_letters = [chr(i) for i in range(ord('a'), ord('z') + 1) if chr(i) not in common_keys]
         self.key_combo.addItems(other_letters)
-        
-        self.key_combo.setCurrentText('w')  # 默认选择w键
 
     def _on_hold_time_changed(self, value):
         """长按时间改变处理"""
@@ -125,7 +133,7 @@ class HotkeyCard(QGroupBox):
     def _on_config_changed_debounced(self):
         """防抖的配置变更处理"""
         self._debounce_timer.stop()
-        self._debounce_timer.start(150)  # 150ms防抖
+        self._debounce_timer.start(150)
 
     def _emit_config_changed(self):
         """发送配置变更信号"""
@@ -238,13 +246,15 @@ class OCRHotkeyCard(QGroupBox):
 
     def get_config(self) -> dict:
         """获取当前OCR配置"""
+        # 从配置管理器获取实际配置值
+        from artalekey.core.config import config_manager
         return {
             'enabled': self.enabled_check.isChecked(),
             'trigger_key': self.key_combo.currentText(),
-            'target_window': 'MapleStory Worlds',  # 固定为默认游戏
-            'save_screenshots': False,  # 默认不保存截图
-            'capture_window_only': True,  # 默认只截取窗口
-            'output_folder': 'ocr_data'
+            'target_window': config_manager.get('screenshot_ocr', 'target_window'),
+            'save_screenshots': config_manager.get('screenshot_ocr', 'save_screenshots'),
+            'capture_window_only': config_manager.get('screenshot_ocr', 'capture_window_only'),
+            'output_folder': config_manager.get('screenshot_ocr', 'output_folder')
         }
 
     def set_config(self, config: dict):

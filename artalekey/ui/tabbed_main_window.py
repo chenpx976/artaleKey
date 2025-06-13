@@ -103,18 +103,38 @@ class TabbedMainWindow(QMainWindow):
         # 恢复窗口几何尺寸
         config_manager.restore_window_geometry(self)
         
-        # 加载所有标签页配置
-        all_configs = config_manager.load_all_ui_configs()
-        
-        # 应用配置到各个标签页
-        for tab_name, config in all_configs.items():
-            if tab_name not in ['ui']:  # 排除UI配置
-                tab = self.tab_manager.get_tab(tab_name)
-                if tab:
-                    tab.set_config(config)
-        
         # 应用核心组件配置
-        self._apply_core_configs(all_configs)
+        self._apply_core_configs()
+    
+    def _apply_core_configs(self):
+        """应用核心组件配置"""
+        # 应用快速向上配置
+        hotkey_config = config_manager.get_hotkey_config("default")
+        self.hotkey_listener.set_hold_time(hotkey_config['hold_time'])
+        self.key_simulator.set_interval(hotkey_config['interval'])
+        # 新增：应用主触发键配置
+        trigger_key = hotkey_config['trigger_key']
+        self.hotkey_listener.set_main_trigger_key(trigger_key)
+        
+        # 应用OCR配置
+        ocr_trigger_key = config_manager.get('screenshot_ocr', 'trigger_key')
+        self.hotkey_listener.set_ocr_trigger_key(ocr_trigger_key)
+        
+        # 应用窗口过滤配置
+        window_filter_enabled = config_manager.get('window_filter', 'enabled')
+        target_app = config_manager.get('window_filter', 'target_app')
+        self.hotkey_listener.set_target_window_name(target_app)
+        
+        if window_filter_enabled:
+            self._setup_window_monitoring(target_app)
+        
+        # 应用API密钥配置
+        api_key = config_manager.get('llm', 'api_key')
+        if api_key:
+            self.screenshot_ocr_manager.update_llm_api_key(api_key)
+            performance_logger.info(f"启动时应用 API 密钥到 LLM 处理器，密钥长度: {len(api_key)}")
+        else:
+            performance_logger.warning("启动时未找到 API 密钥")
     
     def _connect_signals(self):
         """连接所有信号"""
@@ -181,44 +201,6 @@ class TabbedMainWindow(QMainWindow):
         self.screenshot_ocr_manager.data_extracted.connect(self._on_game_data_extracted)
         self.screenshot_ocr_manager.error_occurred.connect(self._on_ocr_error)
     
-    def _apply_core_configs(self, all_configs: dict):
-        """应用核心组件配置"""
-        # 应用快速向上配置
-        quick_up_config = all_configs.get('quick_up', {})
-        hotkey_config = quick_up_config.get('hotkey_config', {})
-        if hotkey_config:
-            self.hotkey_listener.set_hold_time(hotkey_config.get('hold_time', 500))
-            self.key_simulator.set_interval(hotkey_config.get('interval', 50))
-            # 新增：应用主触发键配置
-            trigger_key = hotkey_config.get('trigger_key', 'w')
-            self.hotkey_listener.set_main_trigger_key(trigger_key)
-        
-        # 应用OCR配置
-        ocr_config = all_configs.get('ocr', {})
-        if ocr_config:
-            self.hotkey_listener.set_ocr_trigger_key(ocr_config.get('trigger_key', 'c'))
-            # 初始化OCR状态显示
-            self._update_ocr_status_display(ocr_config)
-        
-        # 应用窗口过滤配置
-        settings_config = all_configs.get('settings', {})
-        window_filter_config = settings_config.get('window_filter', {})
-        if window_filter_config:
-            target_app = window_filter_config.get('target_app', 'MapleStory Worlds')
-            self.hotkey_listener.set_target_window_name(target_app)
-            
-            if window_filter_config.get('enabled', True):
-                self._setup_window_monitoring(target_app)
-        
-        # 应用API密钥配置
-        llm_config = settings_config.get('llm', {})
-        api_key = llm_config.get('api_key', '')
-        if api_key:
-            self.screenshot_ocr_manager.update_llm_api_key(api_key)
-            performance_logger.info(f"启动时应用 API 密钥到 LLM 处理器，密钥长度: {len(api_key)}")
-        else:
-            performance_logger.warning("启动时未找到 API 密钥")
-    
     def _setup_window_monitoring(self, target_app: str):
         """设置窗口监控"""
         self._window_filter_enabled = True
@@ -227,18 +209,10 @@ class TabbedMainWindow(QMainWindow):
     
     def save_configs(self):
         """保存所有配置"""
-        # 收集所有标签页配置
-        all_configs = {}
-        for tab_name, tab in self.tab_manager.get_all_tabs().items():
-            all_configs[tab_name] = tab.get_config()
-        
         # 保存窗口几何信息
         geometry = self.saveGeometry()
         if geometry:
             config_manager.save_window_geometry(geometry)
-        
-        # 保存所有配置
-        config_manager.save_all_ui_configs(all_configs)
     
     # 样式和事件处理
     def update_adaptive_style(self):
@@ -256,7 +230,6 @@ class TabbedMainWindow(QMainWindow):
     # 信号处理方法
     def _on_tab_config_changed(self, tab_name: str, config: dict):
         """标签页配置变更处理"""
-        self.save_configs()
         performance_logger.debug(f"标签页 {tab_name} 配置已更新")
     
     def _on_tab_status_changed(self, tab_name: str, status_message: str):
@@ -266,28 +239,27 @@ class TabbedMainWindow(QMainWindow):
     
     def _on_global_switch_changed(self, enabled: bool):
         """全局开关变更处理"""
-        self.save_configs()
+        # 配置已在标签页中保存，这里不需要额外操作
+        pass
     
     def _on_hotkey_config_changed(self, hotkey_id: str, config: dict):
         """热键配置变更处理"""
         if hotkey_id == "default":
             # 应用所有热键配置
-            self.hotkey_listener.set_hold_time(config.get('hold_time', 500))
-            self.key_simulator.set_interval(config.get('interval', 50))
+            self.hotkey_listener.set_hold_time(config['hold_time'])
+            self.key_simulator.set_interval(config['interval'])
             # 新增：处理主触发键变更
-            trigger_key = config.get('trigger_key', 'w')
+            trigger_key = config['trigger_key']
             self.hotkey_listener.set_main_trigger_key(trigger_key)
-            performance_logger.info(f"热键配置已更新 - 触发键: {trigger_key}, 长按时间: {config.get('hold_time', 500)}ms, 间隔: {config.get('interval', 50)}ms")
-        self.save_configs()
+            performance_logger.info(f"热键配置已更新 - 触发键: {trigger_key}, 长按时间: {config['hold_time']}ms, 间隔: {config['interval']}ms")
     
     def _on_ocr_config_changed(self, config: dict):
         """OCR配置变更处理"""
-        self.hotkey_listener.set_ocr_trigger_key(config.get('trigger_key', 'c'))
-        target_window = config.get('target_window', 'MapleStory Worlds')
+        self.hotkey_listener.set_ocr_trigger_key(config['trigger_key'])
+        target_window = config['target_window']
         self.hotkey_listener.set_target_window_name(target_window)
         # 更新OCR状态显示
         self._update_ocr_status_display(config)
-        self.save_configs()
     
     def _update_ocr_status_display(self, config: dict):
         """更新OCR状态显示"""
@@ -308,15 +280,16 @@ class TabbedMainWindow(QMainWindow):
         """API密钥更新处理"""
         self.screenshot_ocr_manager.update_llm_api_key(api_key)
         performance_logger.info(f"API 密钥已更新，长度: {len(api_key)}")
-        self.save_configs()
     
     def _on_window_filter_enabled(self, enabled: bool):
         """窗口过滤开关变更处理"""
-        self.save_configs()
+        # 配置已在标签页中保存，这里不需要额外操作
+        pass
     
     def _on_target_app_changed(self, target_app: str):
         """目标应用变更处理"""
-        self.save_configs()
+        # 配置已在标签页中保存，这里不需要额外操作
+        pass
     
     def _on_hotkey_detected(self):
         """热键检测处理"""
