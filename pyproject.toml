@@ -1,6 +1,6 @@
 [project]
 name = "artalekey"
-version = "0.1.0"
+version = "0.1.2"
 description = "A modern hotkey management application"
 authors = [
     {name = "Your Name", email = "your.email@example.com"},
@@ -28,6 +28,7 @@ dependencies = [
     "pyobjc-framework-cocoa>=10.3.2",
     "pyobjc-framework-quartz>=10.3.2",
     "pyobjc-framework-applicationservices>=10.3.2",
+    "toml>=0.10.2",
 ]
 requires-python = ">=3.8.1"
 

@@ -8,7 +8,197 @@ import os
 import sys
 import subprocess
 import shutil
+import re
+import zipfile
+import toml
 from pathlib import Path
+from datetime import datetime
+
+def read_version_from_pyproject():
+    """从 pyproject.toml 读取当前版本号"""
+    try:
+        with open('pyproject.toml', 'r', encoding='utf-8') as f:
+            data = toml.load(f)
+        return data['project']['version']
+    except Exception as e:
+        print(f"❌ 读取版本号失败: {e}")
+        return "0.1.0"
+
+def increment_version(version_str):
+    """递增版本号 (x.y.z -> x.y.z+1)"""
+    try:
+        parts = version_str.split('.')
+        if len(parts) != 3:
+            raise ValueError("版本号格式不正确")
+        
+        major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
+        patch += 1
+        
+        return f"{major}.{minor}.{patch}"
+    except Exception as e:
+        print(f"❌ 版本号递增失败: {e}")
+        return version_str
+
+def update_version_in_pyproject(new_version):
+    """更新 pyproject.toml 中的版本号"""
+    try:
+        with open('pyproject.toml', 'r', encoding='utf-8') as f:
+            content = f.read()
+        
+        # 使用正则表达式替换版本号
+        pattern = r'(version\s*=\s*")([^"]+)(")'
+        replacement = f'\\g<1>{new_version}\\g<3>'
+        new_content = re.sub(pattern, replacement, content)
+        
+        with open('pyproject.toml', 'w', encoding='utf-8') as f:
+            f.write(new_content)
+        
+        print(f"✅ 版本号已更新至: {new_version}")
+        return True
+    except Exception as e:
+        print(f"❌ 更新版本号失败: {e}")
+        return False
+
+def create_zip_package(app_path, version):
+    """创建 ZIP 打包文件"""
+    print("📦 创建 ZIP 打包...")
+    
+    try:
+        # 创建带版本号的 ZIP 文件名
+        zip_filename = f"ArtaleKey-{version}-macOS.zip"
+        zip_path = Path('dist') / zip_filename
+        
+        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # 添加 .app 文件夹到 ZIP，保持原始名称（ArtaleKey.app）
+            for root, dirs, files in os.walk(app_path):
+                for file in files:
+                    file_path = Path(root) / file
+                    # 确保 ZIP 内的文件路径不带版本号
+                    arcname = file_path.relative_to(app_path.parent)
+                    zipf.write(file_path, arcname)
+            
+            # 添加使用指南
+            if Path('MACOS_USAGE_GUIDE.md').exists():
+                zipf.write('MACOS_USAGE_GUIDE.md', 'MACOS_USAGE_GUIDE.md')
+        
+        print(f"✅ ZIP 文件已创建: {zip_path}")
+        return zip_path
+    except Exception as e:
+        print(f"❌ 创建 ZIP 文件失败: {e}")
+        return None
+
+def create_dmg_package(app_path, version):
+    """创建 DMG 磁盘映像文件"""
+    print("💿 创建 DMG 磁盘映像...")
+    
+    try:
+        # 创建带版本号的 DMG 文件名
+        dmg_filename = f"ArtaleKey-{version}-macOS.dmg"
+        dmg_path = Path('dist') / dmg_filename
+        
+        # 删除已存在的 DMG 文件
+        if dmg_path.exists():
+            dmg_path.unlink()
+        
+        # 检查是否安装了 create-dmg 工具
+        try:
+            subprocess.run(['which', 'create-dmg'], check=True, capture_output=True)
+            use_create_dmg = True
+            print("✅ 发现 create-dmg 工具，使用高级 DMG 创建")
+        except subprocess.CalledProcessError:
+            use_create_dmg = False
+            print("⚠️  未找到 create-dmg 工具，使用系统默认方式创建 DMG")
+        
+        if use_create_dmg:
+            # 使用 create-dmg 创建精美的 DMG
+            cmd = [
+                'create-dmg',
+                '--volname', 'ArtaleKey',
+                '--window-pos', '200', '120',
+                '--window-size', '800', '400',
+                '--icon-size', '100',
+                '--icon', 'ArtaleKey.app', '200', '190',
+                '--hide-extension', 'ArtaleKey.app',
+                '--app-drop-link', '600', '185',
+                str(dmg_path),
+                'dist/'
+            ]
+            
+            result = subprocess.run(cmd, capture_output=True, text=True)
+            if result.returncode == 0:
+                print(f"✅ DMG 文件已创建: {dmg_path}")
+                return dmg_path
+            else:
+                print(f"⚠️  create-dmg 创建失败，使用备用方案: {result.stderr}")
+                use_create_dmg = False
+        
+        if not use_create_dmg:
+            # 使用 hdiutil 创建基础 DMG
+            temp_dmg = Path('temp.dmg')
+            
+            # 计算需要的磁盘空间 (MB)
+            app_size = sum(f.stat().st_size for f in app_path.rglob('*') if f.is_file())
+            dmg_size = max(100, int(app_size / 1024 / 1024) + 50)  # 至少100MB，实际大小+50MB缓冲
+            
+            # 创建空白镜像
+            cmd = [
+                'hdiutil', 'create',
+                '-size', f'{dmg_size}m',
+                '-fs', 'HFS+',
+                '-volname', 'ArtaleKey',
+                str(temp_dmg)
+            ]
+            subprocess.run(cmd, check=True, capture_output=True)
+            
+            # 挂载镜像
+            result = subprocess.run([
+                'hdiutil', 'attach', str(temp_dmg)
+            ], capture_output=True, text=True, check=True)
+            
+            # 提取挂载点
+            mount_point = None
+            for line in result.stdout.split('\n'):
+                if '/Volumes/' in line:
+                    mount_point = line.split()[-1]
+                    break
+            
+            if mount_point:
+                mount_path = Path(mount_point)
+                
+                # 复制应用程序到镜像
+                shutil.copytree(app_path, mount_path / 'ArtaleKey.app')
+                
+                # 创建应用程序文件夹的符号链接
+                (mount_path / 'Applications').symlink_to('/Applications')
+                
+                # 添加使用指南
+                if Path('MACOS_USAGE_GUIDE.md').exists():
+                    shutil.copy2('MACOS_USAGE_GUIDE.md', mount_path / 'MACOS_USAGE_GUIDE.md')
+                
+                # 卸载镜像
+                subprocess.run(['hdiutil', 'detach', mount_point], check=True, capture_output=True)
+                
+                # 转换为压缩的只读镜像
+                subprocess.run([
+                    'hdiutil', 'convert', str(temp_dmg),
+                    '-format', 'UDZO',
+                    '-o', str(dmg_path)
+                ], check=True, capture_output=True)
+                
+                # 清理临时文件
+                temp_dmg.unlink()
+                
+                print(f"✅ DMG 文件已创建: {dmg_path}")
+                return dmg_path
+            else:
+                raise Exception("无法找到挂载点")
+        
+    except Exception as e:
+        print(f"❌ 创建 DMG 文件失败: {e}")
+        # 清理临时文件
+        if Path('temp.dmg').exists():
+            Path('temp.dmg').unlink()
+        return None
 
 def check_dependencies():
     """检查打包依赖"""
@@ -36,10 +226,18 @@ def check_dependencies():
         print("❌ PyQt6-Charts 未安装")
         print("💡 安装命令: pip install PyQt6-Charts")
         return False
+    
+    try:
+        import toml
+        print(f"✅ toml 已安装")
+    except ImportError:
+        print("❌ toml 未安装")
+        print("💡 安装命令: pip install toml")
+        return False
         
     return True
 
-def create_spec_file():
+def create_spec_file(version):
     """创建PyInstaller规格文件"""
     print("📝 创建打包配置文件...")
     
@@ -129,14 +327,14 @@ app = BUNDLE(
     name='ArtaleKey.app',
     icon='assets/icon.icns' if Path('assets/icon.icns').exists() else None,
     bundle_identifier='com.chenpx976.artalekey',
-    version='1.0.0',
+    version='{version}',
     info_plist={{
         'CFBundleName': 'ArtaleKey',
         'CFBundleDisplayName': 'ArtaleKey',
         'CFBundleGetInfoString': "ArtaleKey - 快捷键管理器",
         'CFBundleIdentifier': "com.chenpx976.artalekey",
-        'CFBundleVersion': "1.0.0",
-        'CFBundleShortVersionString': "1.0.0",
+        'CFBundleVersion': "{version}",
+        'CFBundleShortVersionString': "{version}",
         'NSPrincipalClass': 'NSApplication',
         'NSAppleScriptEnabled': False,
         'NSHighResolutionCapable': True,
@@ -322,7 +520,7 @@ def verify_app(app_path: Path):
         print(f"⚠️  验证过程中出现错误: {e}")
         return False
 
-def post_build_setup():
+def post_build_setup(version):
     """构建后设置"""
     print("⚙️ 进行构建后设置...")
     
@@ -425,48 +623,73 @@ sqlite3 /Library/Application\ Support/com.apple.TCC/TCC.db "SELECT * FROM access
     
     # 创建DMG指南
     dmg_guide = '''
-# 创建DMG安装包
+# DMG 自动创建说明
 
-## 方法一：使用 create-dmg（推荐）
+## 🚀 自动创建 DMG
 
-1. 安装create-dmg工具：
+构建脚本已自动创建 DMG 文件！无需手动操作。
+
+## 📦 DMG 创建方式
+
+### 方式1：create-dmg 工具（推荐）
+如果系统安装了 `create-dmg` 工具，会自动使用高级方式创建：
 ```bash
 brew install create-dmg
 ```
 
-2. 创建DMG：
-```bash
-create-dmg \\
-  --volname "ArtaleKey" \\
-  --window-pos 200 120 \\
-  --window-size 800 400 \\
-  --icon-size 100 \\
-  --icon "ArtaleKey.app" 200 190 \\
-  --hide-extension "ArtaleKey.app" \\
-  --app-drop-link 600 185 \\
-  "ArtaleKey-1.0.0.dmg" \\
-  "dist/"
-```
+特点：
+- ✅ 精美的图标布局
+- ✅ 拖拽到 Applications 快捷方式
+- ✅ 自定义窗口大小和背景
 
-## 方法二：手动创建
+### 方式2：系统默认 hdiutil
+如果没有 `create-dmg`，会使用系统自带的 `hdiutil` 创建：
 
-1. 打开"磁盘工具"
-2. 文件 → 新建映像 → 空白映像
-3. 将ArtaleKey.app拖入
-4. 创建应用程序链接
-5. 保存为DMG文件
+特点：
+- ✅ 无需额外工具
+- ✅ 包含 Applications 符号链接
+- ✅ 自动计算合适大小
 
-## 分发注意事项
+## 📁 DMG 内容
 
-- 如果应用已签名和公证，用户可以直接运行
-- 未签名的应用需要用户手动允许运行
-- 建议在DMG中包含使用说明
+- `ArtaleKey.app` - 应用程序（不带版本号）
+- `Applications` - 应用程序文件夹快捷方式  
+- `MACOS_USAGE_GUIDE.md` - 使用指南
+
+## 🔢 文件命名
+
+- DMG 文件：`ArtaleKey-{version}-macOS.dmg`（带版本号）
+- 内部 APP：`ArtaleKey.app`（不带版本号）
+
+## 💡 安装方式
+
+用户只需：
+1. 下载并打开 DMG 文件
+2. 将 ArtaleKey.app 拖拽到 Applications 文件夹
+3. 在启动台中找到并启动应用
+
+## 🔐 分发注意事项
+
+- 已签名应用：用户可直接运行
+- 未签名应用：需要用户手动允许（右键 → 打开）
+- 首次运行会请求必要的系统权限
 '''
     
     with open('DMG_GUIDE.md', 'w', encoding='utf-8') as f:
         f.write(dmg_guide)
     
     print("✅ DMG创建指南已生成: DMG_GUIDE.md")
+    
+    # 创建 ZIP 打包
+    zip_path = create_zip_package(app_path, version)
+    if zip_path:
+        print(f"✅ ZIP 打包完成: {zip_path}")
+    
+    # 创建 DMG 打包
+    dmg_path = create_dmg_package(app_path, version)
+    if dmg_path:
+        print(f"✅ DMG 打包完成: {dmg_path}")
+    
     return True
 
 def main():
@@ -483,6 +706,17 @@ def main():
     if not check_dependencies():
         return 1
     
+    # 版本管理
+    print("\n🔢 版本管理...")
+    current_version = read_version_from_pyproject()
+    print(f"📋 当前版本: {current_version}")
+    
+    new_version = increment_version(current_version)
+    print(f"🆙 新版本: {new_version}")
+    
+    if not update_version_in_pyproject(new_version):
+        return 1
+    
     print("\n📦 开始打包流程...")
     
     # 检查entitlements.plist文件
@@ -491,7 +725,7 @@ def main():
         print("💡 建议创建此文件以解决快捷键监听问题")
     
     # 创建配置文件
-    if not create_spec_file():
+    if not create_spec_file(new_version):
         return 1
     
     # 创建图标指南
@@ -502,11 +736,14 @@ def main():
         return 1
     
     # 构建后设置
-    if not post_build_setup():
+    if not post_build_setup(new_version):
         return 1
     
     print("\n🎉 打包完成！")
-    print("📱 应用程序位置: dist/ArtaleKey.app")
+    print(f"📱 应用程序位置: dist/ArtaleKey.app")
+    print(f"📦 ZIP 包位置: dist/ArtaleKey-{new_version}-macOS.zip")
+    print(f"💿 DMG 包位置: dist/ArtaleKey-{new_version}-macOS.dmg")
+    print(f"🔢 版本号: {new_version}")
     print("\n⚠️  重要提示 - 必需权限设置:")
     print("   🔧 1. 辅助功能权限 - 用于模拟按键和监听快捷键")
     print("   ⌨️  2. 输入监控权限 - 用于检测全局快捷键组合")
