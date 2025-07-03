@@ -9,7 +9,7 @@ from artalekey.core.config import config_manager
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
 from artalekey.core.logger import performance_logger
 from artalekey.core.window_detector import window_monitor
-from artalekey.core.enhanced_ocr import EnhancedOCRManager
+# from artalekey.core.enhanced_ocr import EnhancedOCRManager  # 已关闭OCR功能
 
 
 class TabbedMainWindow(QMainWindow):
@@ -27,7 +27,7 @@ class TabbedMainWindow(QMainWindow):
         self.tab_manager = None
         self.hotkey_listener = None
         self.key_simulator = None
-        self.screenshot_ocr_manager = None
+        # self.screenshot_ocr_manager = None  # 已关闭OCR功能
         
         # 多行状态栏组件
         self.multi_status_widget = None
@@ -96,7 +96,7 @@ class TabbedMainWindow(QMainWindow):
         """初始化核心组件"""
         self.key_simulator = KeySimulator()
         self.hotkey_listener = HotkeyListener(self)
-        self.screenshot_ocr_manager = EnhancedOCRManager(self)
+        # self.screenshot_ocr_manager = EnhancedOCRManager(self)  # 已关闭OCR功能
     
     def _load_and_apply_configs(self):
         """加载所有配置"""
@@ -116,9 +116,9 @@ class TabbedMainWindow(QMainWindow):
         trigger_key = hotkey_config['trigger_key']
         self.hotkey_listener.set_main_trigger_key(trigger_key)
         
-        # 应用OCR配置
-        ocr_trigger_key = config_manager.get('screenshot_ocr', 'trigger_key')
-        self.hotkey_listener.set_ocr_trigger_key(ocr_trigger_key)
+        # 应用OCR配置 - 已关闭OCR功能
+        # ocr_trigger_key = config_manager.get('screenshot_ocr', 'trigger_key')
+        # self.hotkey_listener.set_ocr_trigger_key(ocr_trigger_key)
         
         # 应用窗口过滤配置
         window_filter_enabled = config_manager.get('window_filter', 'enabled')
@@ -128,13 +128,13 @@ class TabbedMainWindow(QMainWindow):
         if window_filter_enabled:
             self._setup_window_monitoring(target_app)
         
-        # 应用API密钥配置
-        api_key = config_manager.get('llm', 'api_key')
-        if api_key:
-            self.screenshot_ocr_manager.update_llm_api_key(api_key)
-            performance_logger.info(f"启动时应用 API 密钥到 LLM 处理器，密钥长度: {len(api_key)}")
-        else:
-            performance_logger.warning("启动时未找到 API 密钥")
+        # 应用API密钥配置 - 已关闭OCR功能
+        # api_key = config_manager.get('llm', 'api_key')
+        # if api_key:
+        #     self.screenshot_ocr_manager.update_llm_api_key(api_key)
+        #     performance_logger.info(f"启动时应用 API 密钥到 LLM 处理器，密钥长度: {len(api_key)}")
+        # else:
+        #     performance_logger.warning("启动时未找到 API 密钥")
     
     def _connect_signals(self):
         """连接所有信号"""
@@ -145,8 +145,8 @@ class TabbedMainWindow(QMainWindow):
         
         # 连接各个标签页的特定信号
         self._connect_quick_up_signals()
-        self._connect_ocr_signals()
-        self._connect_logs_signals()
+        # self._connect_ocr_signals()  # 已关闭OCR功能
+        # self._connect_logs_signals()  # 已关闭日志功能
         self._connect_settings_signals()
         
         # 连接核心组件信号
@@ -186,7 +186,7 @@ class TabbedMainWindow(QMainWindow):
         # 热键监听器信号
         self.hotkey_listener.key_combination_detected.connect(self._on_hotkey_detected)
         self.hotkey_listener.key_combination_released.connect(self._on_hotkey_released)
-        self.hotkey_listener.screenshot_ocr_toggle.connect(self._on_screenshot_ocr_toggle)
+        # self.hotkey_listener.screenshot_ocr_toggle.connect(self._on_screenshot_ocr_toggle)  # 已关闭OCR功能
         
         # 模拟器信号
         self.key_simulator.simulation_started.connect(self._on_simulation_started)
@@ -196,10 +196,10 @@ class TabbedMainWindow(QMainWindow):
         window_monitor.target_window_activated.connect(self._on_target_window_activated)
         window_monitor.target_window_deactivated.connect(self._on_target_window_deactivated)
         
-        # OCR管理器信号
-        self.screenshot_ocr_manager.ocr_triggered.connect(self._on_ocr_triggered)
-        self.screenshot_ocr_manager.data_extracted.connect(self._on_game_data_extracted)
-        self.screenshot_ocr_manager.error_occurred.connect(self._on_ocr_error)
+        # OCR管理器信号 - 已关闭OCR功能
+        # self.screenshot_ocr_manager.ocr_triggered.connect(self._on_ocr_triggered)
+        # self.screenshot_ocr_manager.data_extracted.connect(self._on_game_data_extracted)
+        # self.screenshot_ocr_manager.error_occurred.connect(self._on_ocr_error)
     
     def _setup_window_monitoring(self, target_app: str):
         """设置窗口监控"""
@@ -277,9 +277,9 @@ class TabbedMainWindow(QMainWindow):
             self.multi_status_widget.update_ocr_status(status_text, status_type)
     
     def _on_api_key_updated(self, api_key: str):
-        """API密钥更新处理"""
-        self.screenshot_ocr_manager.update_llm_api_key(api_key)
-        performance_logger.info(f"API 密钥已更新，长度: {len(api_key)}")
+        """API密钥更新处理 - 已关闭OCR功能"""
+        # self.screenshot_ocr_manager.update_llm_api_key(api_key)
+        performance_logger.info(f"API 密钥已更新，长度: {len(api_key)} (OCR功能已关闭)")
     
     def _on_window_filter_enabled(self, enabled: bool):
         """窗口过滤开关变更处理"""
@@ -439,20 +439,20 @@ class TabbedMainWindow(QMainWindow):
             self.key_simulator.stop()
             self.key_simulator.wait(1000)
         
-        # 停止OCR管理器
-        if hasattr(self, 'screenshot_ocr_manager') and self.screenshot_ocr_manager:
-            performance_logger.info("停止OCR管理器...")
-            if self.screenshot_ocr_manager.isRunning():
-                self.screenshot_ocr_manager.quit()
-                self.screenshot_ocr_manager.wait(1000)
+        # 停止OCR管理器 - 已关闭OCR功能
+        # if hasattr(self, 'screenshot_ocr_manager') and self.screenshot_ocr_manager:
+        #     performance_logger.info("停止OCR管理器...")
+        #     if self.screenshot_ocr_manager.isRunning():
+        #         self.screenshot_ocr_manager.quit()
+        #         self.screenshot_ocr_manager.wait(1000)
         
-        # 清理LLM处理器线程池
-        try:
-            from artalekey.core.llm_processor import LLMProcessor
-            LLMProcessor._cleanup_thread_pool()
-            performance_logger.info("LLM处理器线程池已清理")
-        except Exception as e:
-            performance_logger.warning(f"清理LLM处理器线程池失败: {e}")
+        # 清理LLM处理器线程池 - 已关闭OCR功能
+        # try:
+        #     from artalekey.core.llm_processor import LLMProcessor
+        #     LLMProcessor._cleanup_thread_pool()
+        #     performance_logger.info("LLM处理器线程池已清理")
+        # except Exception as e:
+        #     performance_logger.warning(f"清理LLM处理器线程池失败: {e}")
     
     def _init_window_monitoring(self):
         """初始化窗口监控"""
