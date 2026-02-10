@@ -1,0 +1,73 @@
+name: "挂机攻击（释放后移动）"
+description: "攻击时释放 F 键，移动后重新按住，确保移动生效"
+version: "4.0"
+author: "User"
+
+execution:
+  mode: "continuous"
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # 初始延迟
+  - type: "delay"
+    duration: 500
+
+  # 按住攻击键 F
+  - type: "hold"
+    key: "f"
+
+  # 随机等待 10-15 秒
+  - type: "random"
+    min: 10000
+    max: 15000
+
+  # 释放 F 键，准备移动
+  - type: "release"
+    key: "f"
+
+  # 短暂延迟
+  - type: "delay"
+    duration: 100
+
+  # 往左走两下（长按确保移动）
+  - type: "long_press"
+    key: "left"
+    duration: 300
+  - type: "delay"
+    duration: 150
+  - type: "long_press"
+    key: "left"
+    duration: 300
+
+  # 短暂延迟
+  - type: "delay"
+    duration: 200
+
+  # 往右走两下
+  - type: "long_press"
+    key: "right"
+    duration: 300
+  - type: "delay"
+    duration: 150
+  - type: "long_press"
+    key: "right"
+    duration: 300
+
+  # 短暂延迟后重新按住 F
+  - type: "delay"
+    duration: 100
+
+  # 重新按住攻击键 F
+  - type: "hold"
+    key: "f"
+
+  # 继续攻击一段时间
+  - type: "random"
+    min: 10000
+    max: 15000
+
+  # 循环

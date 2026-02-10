@@ -306,7 +306,7 @@ class ScriptExecutor(QThread):
         """Execute a single key press"""
         pynput_key = self._convert_key_string(key)
         self.keyboard.press(pynput_key)
-        time.sleep(0.05)  # Short delay for key press
+        time.sleep(0.15)  # Increased delay for game movement (150ms)
         self.keyboard.release(pynput_key)
 
     def _execute_long_press(self, key: str, duration: int):

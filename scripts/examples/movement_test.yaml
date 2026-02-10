@@ -1,0 +1,50 @@
+name: "移动测试"
+description: "测试方向键移动是否正常工作"
+version: "1.0"
+author: "Test"
+
+execution:
+  mode: "iterations"
+  iterations: 3
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # 初始延迟
+  - type: "delay"
+    duration: 1000
+
+  # 测试左移（长按 300ms）
+  - type: "long_press"
+    key: "left"
+    duration: 300
+
+  - type: "delay"
+    duration: 500
+
+  # 测试右移（长按 300ms）
+  - type: "long_press"
+    key: "right"
+    duration: 300
+
+  - type: "delay"
+    duration: 500
+
+  # 测试上跳（长按 200ms）
+  - type: "long_press"
+    key: "up"
+    duration: 200
+
+  - type: "delay"
+    duration: 500
+
+  # 测试下蹲（长按 200ms）
+  - type: "long_press"
+    key: "down"
+    duration: 200
+
+  - type: "delay"
+    duration: 1000
