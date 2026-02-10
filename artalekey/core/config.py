@@ -52,6 +52,15 @@ class ConfigManager(QObject):
             },
             'llm': {
                 'api_key': ''
+            },
+            'scripts': {
+                'enabled': False,
+                'current_script': None,
+                'scripts_directory': None,
+                'auto_activate_window': True,
+                'pause_on_focus_loss': True,
+                'resume_on_focus_gain': True,
+                'target_window': 'MapleStory Worlds'
             }
         }
         
@@ -240,6 +249,22 @@ class ConfigManager(QObject):
                 performance_logger.error(f"恢复窗口几何信息失败: {e}")
                 return False
         return False
+
+    def get_script_config(self) -> Dict[str, Any]:
+        """获取脚本配置"""
+        return self.get('scripts')
+
+    def set_script_config(self, config: Dict[str, Any]):
+        """设置脚本配置"""
+        self.set('scripts', config_dict=config)
+
+    def get_scripts_directory(self) -> Optional[str]:
+        """获取脚本目录"""
+        return self.get('scripts', 'scripts_directory')
+
+    def set_scripts_directory(self, directory: str):
+        """设置脚本目录"""
+        self.set('scripts', 'scripts_directory', directory)
 
 # 全局配置管理器实例
 config_manager = ConfigManager() 

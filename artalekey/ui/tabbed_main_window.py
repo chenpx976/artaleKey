@@ -7,6 +7,7 @@ from artalekey.ui.simple_styles import get_adaptive_style
 from artalekey.ui.multi_status_bar import MultiLineStatusWidget
 from artalekey.core.config import config_manager
 from artalekey.core.hotkey_manager import KeySimulator, HotkeyListener
+from artalekey.core.script_executor import ScriptExecutor
 from artalekey.core.logger import performance_logger
 from artalekey.core.window_detector import window_monitor
 # from artalekey.core.enhanced_ocr import EnhancedOCRManager  # 已关闭OCR功能
@@ -27,14 +28,16 @@ class TabbedMainWindow(QMainWindow):
         self.tab_manager = None
         self.hotkey_listener = None
         self.key_simulator = None
+        self.script_executor = None
         # self.screenshot_ocr_manager = None  # 已关闭OCR功能
-        
+
         # 多行状态栏组件
         self.multi_status_widget = None
-        
+
         # 运行状态
         self._is_simulation_running = False
         self._window_filter_enabled = False
+        self._quick_up_was_enabled = False  # Track Quick Up state for script execution
         
         self._init_ui()
         self._init_core_components()
@@ -96,7 +99,13 @@ class TabbedMainWindow(QMainWindow):
         """初始化核心组件"""
         self.key_simulator = KeySimulator()
         self.hotkey_listener = HotkeyListener(self)
+        self.script_executor = ScriptExecutor()
         # self.screenshot_ocr_manager = EnhancedOCRManager(self)  # 已关闭OCR功能
+
+        # Set script executor for script automation tab
+        script_automation_tab = self.tab_manager.get_tab('script_automation')
+        if script_automation_tab:
+            script_automation_tab.set_script_executor(self.script_executor)
     
     def _load_and_apply_configs(self):
         """加载所有配置"""
@@ -142,13 +151,14 @@ class TabbedMainWindow(QMainWindow):
         signal_manager = self.tab_manager.get_signal_manager()
         signal_manager.tab_config_changed.connect(self._on_tab_config_changed)
         signal_manager.tab_status_changed.connect(self._on_tab_status_changed)
-        
+
         # 连接各个标签页的特定信号
         self._connect_quick_up_signals()
+        self._connect_script_automation_signals()
         # self._connect_ocr_signals()  # 已关闭OCR功能
         # self._connect_logs_signals()  # 已关闭日志功能
         self._connect_settings_signals()
-        
+
         # 连接核心组件信号
         self._connect_core_signals()
     
@@ -158,6 +168,20 @@ class TabbedMainWindow(QMainWindow):
         if quick_up_tab:
             quick_up_tab.global_switch_changed.connect(self._on_global_switch_changed)
             quick_up_tab.hotkey_config_changed.connect(self._on_hotkey_config_changed)
+
+    def _connect_script_automation_signals(self):
+        """连接脚本自动化标签页信号"""
+        script_automation_tab = self.tab_manager.get_tab('script_automation')
+        if script_automation_tab:
+            script_automation_tab.script_execution_started.connect(self._on_script_started)
+            script_automation_tab.script_execution_stopped.connect(self._on_script_stopped)
+
+        # Connect script executor signals
+        if self.script_executor:
+            self.script_executor.execution_started.connect(self._on_script_execution_started)
+            self.script_executor.execution_stopped.connect(self._on_script_execution_stopped)
+            self.script_executor.execution_paused.connect(self._on_script_execution_paused)
+            self.script_executor.execution_resumed.connect(self._on_script_execution_resumed)
     
     def _connect_ocr_signals(self):
         """连接OCR标签页信号"""
@@ -314,14 +338,75 @@ class TabbedMainWindow(QMainWindow):
         quick_up_tab = self.tab_manager.get_tab('quick_up')
         if quick_up_tab:
             quick_up_tab.set_simulation_status(False)
-    
+
+    def _on_script_started(self):
+        """Handle script execution start"""
+        # Auto-disable Quick Up feature to avoid conflicts
+        quick_up_tab = self.tab_manager.get_tab('quick_up')
+        if quick_up_tab and quick_up_tab.is_enabled():
+            self._quick_up_was_enabled = True
+            quick_up_tab.set_enabled(False)
+            performance_logger.info("Quick Up disabled during script execution")
+
+        # Auto-activate game window if configured
+        script_config = config_manager.get_script_config()
+        if script_config.get('auto_activate_window'):
+            target_window = script_config.get('target_window')
+            if target_window:
+                try:
+                    # Use the detector's activate_game_window method
+                    window_monitor.detector.activate_game_window(target_window)
+                    performance_logger.info(f"Activated target window: {target_window}")
+                except Exception as e:
+                    performance_logger.error(f"Failed to activate window: {e}")
+
+    def _on_script_stopped(self):
+        """Handle script execution stop"""
+        # Re-enable Quick Up if it was enabled before
+        if self._quick_up_was_enabled:
+            quick_up_tab = self.tab_manager.get_tab('quick_up')
+            if quick_up_tab:
+                quick_up_tab.set_enabled(True)
+                performance_logger.info("Quick Up restored after script execution")
+            self._quick_up_was_enabled = False
+
+    def _on_script_execution_started(self):
+        """Handle script executor started signal"""
+        if self.multi_status_widget:
+            self.multi_status_widget.update_status("脚本执行中...")
+
+    def _on_script_execution_stopped(self):
+        """Handle script executor stopped signal"""
+        if self.multi_status_widget:
+            self.multi_status_widget.update_status("脚本已停止")
+
+    def _on_script_execution_paused(self):
+        """Handle script executor paused signal"""
+        if self.multi_status_widget:
+            self.multi_status_widget.update_status("脚本已暂停")
+
+    def _on_script_execution_resumed(self):
+        """Handle script executor resumed signal"""
+        if self.multi_status_widget:
+            self.multi_status_widget.update_status("脚本继续执行...")
+
     def _on_target_window_activated(self):
         """目标窗口激活处理"""
-        pass  # 窗口状态已通过_update_window_status处理
-    
+        # Handle script execution resume
+        if self.script_executor and self.script_executor.is_paused():
+            script_config = config_manager.get_script_config()
+            if script_config.get('pause_on_focus_loss', True):
+                self.script_executor.resume_execution()
+                performance_logger.info("Script resumed due to window focus gain")
+
     def _on_target_window_deactivated(self):
         """目标窗口失活处理"""
-        pass  # 窗口状态已通过_update_window_status处理
+        # Handle script execution pause
+        if self.script_executor and self.script_executor.is_running():
+            script_config = config_manager.get_script_config()
+            if script_config.get('pause_on_focus_loss', True):
+                self.script_executor.pause_execution()
+                performance_logger.info("Script paused due to window focus loss")
     
     def _on_screenshot_ocr_toggle(self):
         """截屏OCR触发处理"""
@@ -432,13 +517,20 @@ class TabbedMainWindow(QMainWindow):
             performance_logger.info("停止热键监听器...")
             self.hotkey_listener.stop()
             self.hotkey_listener.wait(1000)
-        
+
         # 停止按键模拟器
         if hasattr(self, 'key_simulator') and self.key_simulator:
             performance_logger.info("停止按键模拟器...")
             self.key_simulator.stop()
             self.key_simulator.wait(1000)
-        
+
+        # 停止脚本执行器
+        if hasattr(self, 'script_executor') and self.script_executor:
+            performance_logger.info("停止脚本执行器...")
+            if self.script_executor.is_running():
+                self.script_executor.stop_execution()
+                self.script_executor.wait(1000)
+
         # 停止OCR管理器 - 已关闭OCR功能
         # if hasattr(self, 'screenshot_ocr_manager') and self.screenshot_ocr_manager:
         #     performance_logger.info("停止OCR管理器...")

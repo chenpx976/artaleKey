@@ -6,13 +6,15 @@ from artalekey.ui.tabs.quick_up_tab import QuickUpTab
 # from artalekey.ui.tabs.ocr_tab import OCRTab
 from artalekey.ui.tabs.settings_tab import SettingsTab
 # from artalekey.ui.tabs.logs_tab import LogsTab
+from artalekey.ui.tabs.script_automation_tab import ScriptAutomationTab
 
 
 class TabFactory:
     """标签页工厂 - 负责创建和管理所有标签页"""
-    
+
     TAB_CONFIGS = [
         {"name": "quick_up", "title": "快速向上", "class": QuickUpTab},
+        {"name": "script_automation", "title": "脚本自动化", "class": ScriptAutomationTab},
         # {"name": "ocr", "title": "OCR识别", "class": OCRTab},  # 已关闭
         # {"name": "logs", "title": "日志", "class": LogsTab},  # 已关闭
         {"name": "settings", "title": "设置", "class": SettingsTab},
@@ -106,8 +108,9 @@ class TabManager:
 # 导出主要类和函数
 __all__ = [
     'BaseTab',
-    'TabSignalManager', 
+    'TabSignalManager',
     'QuickUpTab',
+    'ScriptAutomationTab',
     # 'OCRTab',  # 已关闭
     # 'LogsTab',  # 已关闭
     'SettingsTab',

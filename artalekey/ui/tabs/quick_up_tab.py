@@ -189,4 +189,23 @@ class QuickUpTab(BaseTab):
             # 确保enabled状态与全局开关一致
             config = config.copy()
             config['enabled'] = self._global_switch.isChecked() if self._global_switch else False
-            self._hotkey_card.set_config(config) 
+            self._hotkey_card.set_config(config)
+
+    def set_enabled(self, enabled: bool):
+        """
+        设置快速向上功能启用/禁用状态
+
+        Args:
+            enabled: True启用，False禁用
+        """
+        if self._global_switch:
+            self._global_switch.setChecked(enabled)
+
+    def get_enabled(self) -> bool:
+        """
+        获取快速向上功能启用状态
+
+        Returns:
+            True表示启用，False表示禁用
+        """
+        return self.is_enabled() 

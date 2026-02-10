@@ -1,0 +1,41 @@
+name: "Advanced Skill Combo"
+description: "Multi-skill rotation with modifiers"
+version: "1.0"
+author: "ArtaleKey"
+
+execution:
+  mode: "iterations"
+  iterations: 10
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # Buff phase
+  - type: "press"
+    key: "f1"
+  - type: "delay"
+    duration: 500
+
+  # Main attack sequence (repeat 3 times)
+  - type: "repeat"
+    count: 3
+    operations:
+      - type: "long_press"
+        key: "a"
+        duration: 300
+      - type: "delay"
+        duration: 200
+      - type: "press"
+        key: "s"
+      - type: "delay"
+        duration: 500
+
+  # Ultimate skill with modifier
+  - type: "combo"
+    keys: ["shift", "q"]
+    duration: 100
+  - type: "delay"
+    duration: 2000

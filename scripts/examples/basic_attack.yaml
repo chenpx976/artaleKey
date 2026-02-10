@@ -1,0 +1,22 @@
+name: "Basic Attack Rotation"
+description: "Simple two-skill rotation"
+version: "1.0"
+author: "ArtaleKey"
+
+execution:
+  mode: "continuous"
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  - type: "press"
+    key: "a"
+  - type: "delay"
+    duration: 800
+  - type: "press"
+    key: "s"
+  - type: "delay"
+    duration: 800
