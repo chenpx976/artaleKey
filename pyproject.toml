@@ -1,6 +1,6 @@
 [project]
 name = "artalekey"
-version = "0.1.2"
+version = "0.1.3"
 description = "A modern hotkey management application"
 authors = [
     {name = "Your Name", email = "your.email@example.com"},
