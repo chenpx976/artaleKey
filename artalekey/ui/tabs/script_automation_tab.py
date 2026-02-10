@@ -15,6 +15,7 @@ from typing import Dict, Any, Optional
 
 from artalekey.ui.tabs.base_tab import BaseTab
 from artalekey.ui.yaml_highlighter import YAMLHighlighter
+from artalekey.ui.ai_generate_dialog import AIGenerateDialog
 from artalekey.core.script_manager import ScriptManager
 from artalekey.core.script_executor import ScriptExecutor, ExecutionState
 from artalekey.core.script_parser import ScriptParser
@@ -112,17 +113,31 @@ class ScriptAutomationTab(BaseTab):
         new_button.clicked.connect(self._on_new_script)
         button_layout.addWidget(new_button)
 
+        ai_button = QPushButton("🤖 AI Generate")
+        ai_button.clicked.connect(self._on_ai_generate)
+        ai_button.setStyleSheet(
+            "QPushButton { "
+            "background-color: #2196F3; "
+            "color: white; "
+            "font-weight: bold; "
+            "} "
+            "QPushButton:hover { "
+            "background-color: #1976D2; "
+            "}"
+        )
+        button_layout.addWidget(ai_button)
+
         import_button = QPushButton("Import")
         import_button.clicked.connect(self._on_import_script)
         button_layout.addWidget(import_button)
 
-        export_button = QPushButton("Export")
-        export_button.clicked.connect(self._on_export_script)
-        button_layout.addWidget(export_button)
-
         group_layout.addLayout(button_layout)
 
         button_layout2 = QHBoxLayout()
+
+        export_button = QPushButton("Export")
+        export_button.clicked.connect(self._on_export_script)
+        button_layout2.addWidget(export_button)
 
         delete_button = QPushButton("Delete")
         delete_button.clicked.connect(self._on_delete_script)
@@ -337,6 +352,68 @@ class ScriptAutomationTab(BaseTab):
                     "Error",
                     f"Failed to create script:\n{e}"
                 )
+
+    def _on_ai_generate(self):
+        """Open AI generation dialog"""
+        # Check if API key is configured
+        api_key = config_manager.get('llm', 'api_key')
+        if not api_key:
+            reply = QMessageBox.question(
+                self,
+                "未配置 API 密钥",
+                "AI 脚本生成需要配置 OpenRouter API Key。\n\n"
+                "是否现在前往设置页面配置？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            )
+            if reply == QMessageBox.StandardButton.Yes:
+                # Switch to settings tab
+                # Note: This would require access to the tab widget, which we don't have here
+                # So we just show a message
+                QMessageBox.information(
+                    self,
+                    "提示",
+                    "请切换到\"设置\"标签页，在 LLM 配置中设置 API Key。"
+                )
+            return
+
+        # Open AI generation dialog
+        dialog = AIGenerateDialog(self)
+        dialog.script_generated.connect(self._on_ai_script_generated)
+        dialog.exec()
+
+    def _on_ai_script_generated(self, yaml_content: str):
+        """Handle AI-generated script"""
+        try:
+            # Parse the generated script to get the name
+            script = self.script_parser.parse_yaml(yaml_content)
+            script_name = script.name
+
+            # Create a new script file with the generated content
+            import os
+            from datetime import datetime
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            safe_name = "".join(c for c in script_name if c.isalnum() or c in (' ', '-', '_')).strip()
+            safe_name = safe_name.replace(' ', '_')
+            filename = f"{safe_name}_{timestamp}.yaml"
+            scripts_dir = self.script_manager.get_scripts_directory()
+            file_path = os.path.join(scripts_dir, filename)
+
+            # Save the generated script
+            self.script_manager.save_script(yaml_content, file_path)
+
+            # Refresh list and load into editor
+            self._refresh_script_list()
+            self._load_script_into_editor(file_path)
+
+            performance_logger.info(f"AI-generated script saved: {file_path}")
+
+        except Exception as e:
+            QMessageBox.critical(
+                self,
+                "Error",
+                f"Failed to save AI-generated script:\n{e}"
+            )
+            performance_logger.error(f"Failed to save AI-generated script: {e}")
 
     def _on_import_script(self):
         """Import script from external location"""

@@ -42,7 +42,7 @@ class ScriptParser:
 
     # Supported operation types
     VALID_OPERATIONS = {
-        'press', 'long_press', 'hold', 'release', 'delay', 'repeat', 'combo'
+        'press', 'long_press', 'hold', 'release', 'delay', 'repeat', 'combo', 'random'
     }
 
     # Supported keys
@@ -335,6 +335,28 @@ class ScriptParser:
                 params['keys'] = keys
                 params['duration'] = int(duration)
 
+            elif op_type == 'random':
+                min_duration = op_data.get('min')
+                max_duration = op_data.get('max')
+                if min_duration is None:
+                    raise ValueError(f"Operation {i}: 'random' requires 'min' field")
+                if max_duration is None:
+                    raise ValueError(f"Operation {i}: 'random' requires 'max' field")
+                if not isinstance(min_duration, (int, float)) or min_duration <= 0:
+                    raise ValueError(
+                        f"Operation {i}: 'min' must be positive number"
+                    )
+                if not isinstance(max_duration, (int, float)) or max_duration <= 0:
+                    raise ValueError(
+                        f"Operation {i}: 'max' must be positive number"
+                    )
+                if min_duration >= max_duration:
+                    raise ValueError(
+                        f"Operation {i}: 'min' must be less than 'max'"
+                    )
+                params['min'] = int(min_duration)
+                params['max'] = int(max_duration)
+
             # Create operation object
             operation = ScriptOperation(op_type=op_type, params=params)
             operations.append(operation)
@@ -399,6 +421,21 @@ class ScriptParser:
                 for key in keys:
                     if key not in self.VALID_KEYS:
                         errors.append(f"Operation {index}: Invalid key '{key}'")
+
+        if op.op_type == 'random':
+            min_val = op.params.get('min')
+            max_val = op.params.get('max')
+            if min_val is None:
+                errors.append(f"Operation {index}: Missing 'min' parameter")
+            if max_val is None:
+                errors.append(f"Operation {index}: Missing 'max' parameter")
+            if min_val is not None and max_val is not None:
+                if not isinstance(min_val, (int, float)) or min_val <= 0:
+                    errors.append(f"Operation {index}: 'min' must be positive number")
+                if not isinstance(max_val, (int, float)) or max_val <= 0:
+                    errors.append(f"Operation {index}: 'max' must be positive number")
+                if min_val >= max_val:
+                    errors.append(f"Operation {index}: 'min' must be less than 'max'")
 
         return errors
 

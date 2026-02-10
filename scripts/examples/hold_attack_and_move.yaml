@@ -1,0 +1,49 @@
+name: "挂机攻击并移动"
+description: "按住攻击键 F，定期左右移动，适合挂机"
+version: "1.0"
+author: "User"
+
+execution:
+  mode: "continuous"
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # 按住攻击键 F
+  - type: "hold"
+    key: "f"
+
+  # 等待 12 秒（模拟 10-15 秒的中间值）
+  - type: "delay"
+    duration: 12000
+
+  # 往左走两下
+  - type: "press"
+    key: "left"
+  - type: "delay"
+    duration: 150
+  - type: "press"
+    key: "left"
+  - type: "delay"
+    duration: 150
+
+  # 往右走两下
+  - type: "press"
+    key: "right"
+  - type: "delay"
+    duration: 150
+  - type: "press"
+    key: "right"
+  - type: "delay"
+    duration: 150
+
+  # 释放攻击键 F
+  - type: "release"
+    key: "f"
+
+  # 短暂延迟后重复整个循环
+  - type: "delay"
+    duration: 500

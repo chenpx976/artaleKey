@@ -1,0 +1,44 @@
+name: "挂机攻击并移动（改进版）"
+description: "按住攻击键 F，随机等待 10-15 秒后移动，适合挂机防掉线"
+version: "2.0"
+author: "User"
+
+execution:
+  mode: "continuous"
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # 初始延迟，等待窗口激活
+  - type: "delay"
+    duration: 500
+
+  # 按住攻击键 F
+  - type: "hold"
+    key: "f"
+
+  # 随机等待 10-15 秒（10000-15000 毫秒）
+  - type: "random"
+    min: 10000
+    max: 15000
+
+  # 释放攻击键 F
+  - type: "release"
+    key: "f"
+
+  # 往左走两下
+  - type: "press"
+    key: "left"
+  - type: "delay"
+    duration: 500
+  - type: "press"
+    key: "left"
+  - type: "delay"
+    duration: 500
+
+  # 短暂延迟后重复整个循环
+  - type: "delay"
+    duration: 500

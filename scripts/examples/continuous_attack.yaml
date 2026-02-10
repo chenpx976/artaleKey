@@ -1,0 +1,49 @@
+name: "持续挂机攻击"
+description: "一直按住攻击键，定期移动防掉线"
+version: "2.0"
+author: "User"
+
+execution:
+  mode: "continuous"
+
+window:
+  auto_activate: true
+  pause_on_focus_loss: true
+  target_window: "MapleStory Worlds"
+
+operations:
+  # 初始延迟，等待窗口激活
+  - type: "delay"
+    duration: 500
+
+  # 按住攻击键 F（一直保持按住状态）
+  - type: "hold"
+    key: "f"
+
+  # 随机等待 10-15 秒
+  - type: "random"
+    min: 10000
+    max: 15000
+
+  # 往左走两下（攻击键仍然按住）
+  - type: "press"
+    key: "left"
+  - type: "delay"
+    duration: 150
+  - type: "press"
+    key: "left"
+
+  # 随机等待 10-15 秒
+  - type: "random"
+    min: 10000
+    max: 15000
+
+  # 往右走两下（攻击键仍然按住）
+  - type: "press"
+    key: "right"
+  - type: "delay"
+    duration: 150
+  - type: "press"
+    key: "right"
+
+  # 继续循环（F 键一直保持按住，直到脚本停止）

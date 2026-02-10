@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Optional, Set
 import time
 import threading
+import random
 
 from PyQt6.QtCore import QThread, pyqtSignal
 from pynput.keyboard import Key, KeyCode, Controller
@@ -288,6 +289,11 @@ class ScriptExecutor(QThread):
                     operation.params['keys'],
                     operation.params['duration']
                 )
+            elif operation.op_type == 'random':
+                self._execute_random_delay(
+                    operation.params['min'],
+                    operation.params['max']
+                )
 
             # Emit operation description
             self.operation_executed.emit(self._get_operation_description(operation))
@@ -334,6 +340,14 @@ class ScriptExecutor(QThread):
     def _execute_delay(self, duration: int):
         """Execute a delay"""
         duration_sec = duration / 1000.0
+        self._stop_event.wait(duration_sec)
+
+    def _execute_random_delay(self, min_duration: int, max_duration: int):
+        """Execute a random delay between min and max milliseconds"""
+        # Generate random duration in milliseconds
+        random_duration = random.randint(min_duration, max_duration)
+        duration_sec = random_duration / 1000.0
+        performance_logger.debug(f"Random delay: {random_duration}ms")
         self._stop_event.wait(duration_sec)
 
     def _execute_combo(self, keys: list, duration: int):
@@ -396,6 +410,9 @@ class ScriptExecutor(QThread):
             return f"Release {operation.params['key']}"
         elif operation.op_type == 'delay':
             return f"Delay {operation.params['duration']}ms"
+        elif operation.op_type == 'random':
+            return (f"Random delay {operation.params['min']}-"
+                   f"{operation.params['max']}ms")
         elif operation.op_type == 'combo':
             keys_str = '+'.join(operation.params['keys'])
             return f"Combo {keys_str}"

@@ -373,22 +373,22 @@ class TabbedMainWindow(QMainWindow):
     def _on_script_execution_started(self):
         """Handle script executor started signal"""
         if self.multi_status_widget:
-            self.multi_status_widget.update_status("脚本执行中...")
+            self.multi_status_widget.update_ocr_status("🤖 脚本执行中...", "processing")
 
     def _on_script_execution_stopped(self):
         """Handle script executor stopped signal"""
         if self.multi_status_widget:
-            self.multi_status_widget.update_status("脚本已停止")
+            self.multi_status_widget.update_ocr_status("⏹ 脚本已停止", "info")
 
     def _on_script_execution_paused(self):
         """Handle script executor paused signal"""
         if self.multi_status_widget:
-            self.multi_status_widget.update_status("脚本已暂停")
+            self.multi_status_widget.update_ocr_status("⏸ 脚本已暂停", "info")
 
     def _on_script_execution_resumed(self):
         """Handle script executor resumed signal"""
         if self.multi_status_widget:
-            self.multi_status_widget.update_status("脚本继续执行...")
+            self.multi_status_widget.update_ocr_status("▶ 脚本继续执行...", "processing")
 
     def _on_target_window_activated(self):
         """目标窗口激活处理"""
